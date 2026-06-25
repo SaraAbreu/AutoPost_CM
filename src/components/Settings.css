@@ -1,0 +1,106 @@
+.settings-page { max-width: 760px; margin: 0 auto; }
+.settings-loading { color: var(--text2); }
+
+.settings-header { margin-bottom: 32px; }
+.settings-header h1 { font-size: 26px; font-weight: 700; margin-bottom: 4px; }
+.settings-header p { color: var(--text2); font-size: 14px; }
+
+.settings-form { display: flex; flex-direction: column; gap: 24px; }
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.field-group { display: flex; flex-direction: column; gap: 6px; }
+.field-group.full { grid-column: 1 / -1; }
+
+.field-group label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text2);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.field-group input,
+.field-group select,
+.field-group textarea {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 14px;
+  transition: border-color 0.2s;
+  font-family: inherit;
+}
+
+.field-group input:focus,
+.field-group select:focus,
+.field-group textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.field-group textarea { resize: vertical; line-height: 1.6; }
+
+.field-group select { cursor: pointer; }
+
+/* ── Voz aprendida ── */
+.voice-section {
+  background: rgba(168, 85, 247, 0.07);
+  border: 1px solid rgba(168, 85, 247, 0.25);
+  border-radius: var(--radius);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.voice-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.voice-title { font-size: 15px; font-weight: 700; color: #c084fc; }
+.voice-count { font-size: 13px; color: var(--text2); }
+
+.voice-empty {
+  font-size: 13px;
+  color: var(--text2);
+  line-height: 1.6;
+}
+
+.voice-patterns-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text2);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.voice-patterns-text {
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+.settings-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 16px;
+  padding-top: 8px;
+}
+
+.settings-saved {
+  font-size: 14px;
+  color: #4ade80;
+}

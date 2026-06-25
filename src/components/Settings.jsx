@@ -1,0 +1,138 @@
+import React, { useState, useEffect } from 'react';
+import './Settings.css';
+
+const TONOS = ['Profesional', 'Cercano', 'Inspiracional', 'Divertido'];
+
+export default function Settings() {
+  const [form, setForm] = useState({
+    nombre: '', instagram: '', sector: '', ciudad: '', servicios: '', tono: 'Cercano', cta: '', hashtags: ''
+  });
+  const [saved, setSaved] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [voice, setVoice] = useState({ count: 0, patterns: null });
+
+  useEffect(() => {
+    Promise.all([
+      fetch('/api/profile').then(r => r.json()),
+      fetch('/api/voice').then(r => r.json())
+    ]).then(([profile, voiceData]) => {
+      if (profile) setForm(f => ({ ...f, ...profile }));
+      if (voiceData) setVoice(voiceData);
+    }).finally(() => setLoading(false));
+  }, []);
+
+  function update(e) {
+    setSaved(false);
+    setForm(f => ({ ...f, [e.target.name]: e.target.value }));
+  }
+
+  async function save(e) {
+    e.preventDefault();
+    await fetch('/api/profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(form)
+    });
+    setSaved(true);
+  }
+
+  if (loading) return <div className="settings-page"><p className="settings-loading">Cargando perfil…</p></div>;
+
+  return (
+    <div className="settings-page">
+      <div className="settings-header">
+        <h1>Perfil de marca</h1>
+        <p>La IA usará estos datos para generar captions adaptados a tu empresa</p>
+      </div>
+
+      <form className="settings-form" onSubmit={save}>
+        <div className="settings-grid">
+
+          <div className="field-group">
+            <label>Nombre de la empresa *</label>
+            <input name="nombre" value={form.nombre} onChange={update} placeholder="Ej: Seguros García" required />
+          </div>
+
+          <div className="field-group">
+            <label>Usuario de Instagram</label>
+            <input name="instagram" value={form.instagram} onChange={update} placeholder="Ej: sa_draftstudio" />
+          </div>
+
+          <div className="field-group">
+            <label>Sector / industria</label>
+            <input name="sector" value={form.sector} onChange={update} placeholder="Ej: Correduría de seguros" />
+          </div>
+
+          <div className="field-group">
+            <label>Ciudad / ubicación</label>
+            <input name="ciudad" value={form.ciudad} onChange={update} placeholder="Ej: Madrid" />
+          </div>
+
+          <div className="field-group">
+            <label>Tono de comunicación</label>
+            <select name="tono" value={form.tono} onChange={update}>
+              {TONOS.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+
+          <div className="field-group full">
+            <label>Productos y servicios principales</label>
+            <textarea
+              name="servicios"
+              value={form.servicios}
+              onChange={update}
+              rows={3}
+              placeholder="Ej: Seguros de hogar, auto, vida y salud para familias y autónomos"
+            />
+          </div>
+
+          <div className="field-group full">
+            <label>Llamada a la acción habitual</label>
+            <input
+              name="cta"
+              value={form.cta}
+              onChange={update}
+              placeholder="Ej: Llámanos al 900 123 456 o escríbenos por DM"
+            />
+          </div>
+
+          <div className="field-group full">
+            <label>Hashtags propios (separados por espacios)</label>
+            <input
+              name="hashtags"
+              value={form.hashtags}
+              onChange={update}
+              placeholder="Ej: #SegurosGarcía #TuSeguroDeConfianza #MadridSeguros"
+            />
+          </div>
+
+        </div>
+
+        {/* Sección voz aprendida */}
+        <div className="voice-section">
+          <div className="voice-header">
+            <span className="voice-title">🧠 Voz aprendida</span>
+            <span className="voice-count">{voice.count} {voice.count === 1 ? 'edición guardada' : 'ediciones guardadas'}</span>
+          </div>
+          {voice.patterns ? (
+            <div className="voice-patterns">
+              <p className="voice-patterns-label">Patrones detectados:</p>
+              <pre className="voice-patterns-text">{voice.patterns}</pre>
+            </div>
+          ) : (
+            <p className="voice-empty">
+              {voice.count === 0
+                ? 'Aún no hay datos. Edita un caption antes de aprobarlo y la IA irá aprendiendo tu estilo.'
+                : `${voice.count}/3 ediciones guardadas. Con 3 la IA activará el aprendizaje automático.`}
+            </p>
+          )}
+        </div>
+
+        <div className="settings-footer">
+          {saved && <span className="settings-saved">✅ Perfil guardado</span>}
+          <button type="submit" className="btn btn-primary">Guardar perfil</button>
+        </div>
+      </form>
+    </div>
+  );
+}
