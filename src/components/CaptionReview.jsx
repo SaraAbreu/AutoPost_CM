@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import './CaptionReview.css';
 
-const TONOS = ['✨ Inspiracional', '💬 Cercano', '🎯 Comercial'];
+const DEFAULT_TONOS = ['✨ Inspiracional', '💬 Cercano', '🎯 Comercial'];
 
 export default function CaptionReview({ job, onDone, onBack }) {
   const [captions, setCaptions] = useState(job.captions ?? [job.caption]);
+  const [tones, setTones] = useState(job.tones ?? DEFAULT_TONOS);
   const hasVariants = captions.length > 1;
   const [selected, setSelected] = useState(hasVariants ? null : 0);
   const [caption, setCaption] = useState(job.caption);
@@ -15,6 +16,8 @@ export default function CaptionReview({ job, onDone, onBack }) {
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
   const [profile, setProfile] = useState({});
+  const [bestTime, setBestTime] = useState(null);
+  const [loadingTime, setLoadingTime] = useState(false);
 
   const charCount = caption.length;
   const charLimit = 2200;
@@ -23,7 +26,20 @@ export default function CaptionReview({ job, onDone, onBack }) {
   const igLocation = profile.ciudad || 'España';
 
   useEffect(() => {
-    fetch('/api/profile').then(r => r.json()).then(setProfile).catch(() => {});
+    fetch('/api/profile').then(r => r.json()).then(p => {
+      setProfile(p);
+      // Pedir mejor hora en cuanto tengamos perfil y caption
+      setLoadingTime(true);
+      fetch('/api/best-time', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sector: p.sector, caption: job.caption })
+      })
+        .then(r => r.json())
+        .then(data => { if (!data.error) setBestTime(data); })
+        .catch(() => {})
+        .finally(() => setLoadingTime(false));
+    }).catch(() => {});
   }, []);
 
   async function approve() {
@@ -77,6 +93,7 @@ export default function CaptionReview({ job, onDone, onBack }) {
       if (!res.ok) throw new Error(data.error || 'Error regenerando');
       const newCaptions = data.captions ?? [data.caption];
       setCaptions(newCaptions);
+      if (data.tones) setTones(data.tones);
       job.id = data.id;
       setSelected(null);
     } catch (err) {
@@ -128,7 +145,7 @@ export default function CaptionReview({ job, onDone, onBack }) {
         <div className="variants-grid">
           {captions.map((c, i) => (
             <div key={i} className="variant-card card" onClick={() => { setCaption(c); setOriginalCaption(c); setSelected(i); }}>
-              <div className="variant-tag">{TONOS[i] ?? `Opción ${i + 1}`}</div>
+              <div className="variant-tag">{tones[i] ?? `Opción ${i + 1}`}</div>
               <p className="variant-preview">{c.split('\n')[0]}</p>
               <p className="variant-body">{c.split('\n').slice(1).join(' ').slice(0, 120)}…</p>
               <button className="btn btn-primary variant-btn">Usar esta →</button>
@@ -229,6 +246,28 @@ export default function CaptionReview({ job, onDone, onBack }) {
           <p className="review-hint">
             💡 Puedes editar el caption antes de publicar. Los cambios se guardan en el historial.
           </p>
+
+          {/* Mejor hora */}
+          <div className="best-time-card">
+            <div className="best-time-header">
+              <span className="best-time-title">🕐 Mejor momento para publicar</span>
+            </div>
+            {loadingTime ? (
+              <p className="best-time-loading"><span className="spinner" /> Analizando tu sector…</p>
+            ) : bestTime ? (
+              <div className="best-time-body">
+                <div className="best-time-row">
+                  <span className="best-time-label">📅 Días</span>
+                  <span className="best-time-value">{bestTime.dias?.join(', ')}</span>
+                </div>
+                <div className="best-time-row">
+                  <span className="best-time-label">🕐 Hora</span>
+                  <span className="best-time-value">{bestTime.horas}</span>
+                </div>
+                <p className="best-time-reason">{bestTime.razon}</p>
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
     </div>

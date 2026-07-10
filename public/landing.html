@@ -1,0 +1,1021 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AutoPost CM — Instagram en piloto automático</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #060609;
+      --bg2:     #0d0d16;
+      --bg3:     #13131f;
+      --accent:  #6366f1;
+      --accent2: #a78bfa;
+      --text:    #f0f0f8;
+      --text2:   #8b8fa8;
+      --border:  rgba(255,255,255,0.07);
+      --radius:  16px;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    /* ── NAV ── */
+    nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 40px;
+      height: 64px;
+      background: rgba(6,6,9,0.8);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(20px);
+    }
+
+    .nav-logo {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .nav-logo-mark {
+      width: 32px; height: 32px;
+      border-radius: 9px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px;
+      box-shadow: 0 0 20px rgba(99,102,241,0.4);
+    }
+
+    .nav-logo span { color: #a78bfa; }
+
+    .nav-cta {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: #fff;
+      border: none;
+      padding: 9px 20px;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      box-shadow: 0 2px 12px rgba(99,102,241,0.35);
+      transition: all 0.18s;
+      text-decoration: none;
+      display: inline-block;
+    }
+    .nav-cta:hover { transform: translateY(-1px); box-shadow: 0 4px 20px rgba(99,102,241,0.5); }
+
+    /* ── HERO ── */
+    .hero {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 120px 24px 80px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero-glow {
+      position: absolute;
+      top: -200px; left: 50%; transform: translateX(-50%);
+      width: 800px; height: 600px;
+      background: radial-gradient(ellipse, rgba(99,102,241,0.15) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .hero-glow-2 {
+      position: absolute;
+      bottom: -100px; right: -200px;
+      width: 500px; height: 500px;
+      background: radial-gradient(ellipse, rgba(139,92,246,0.1) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(99,102,241,0.1);
+      border: 1px solid rgba(99,102,241,0.25);
+      color: #a78bfa;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 28px;
+      letter-spacing: -0.01em;
+    }
+
+    .badge-dot {
+      width: 6px; height: 6px;
+      background: #6366f1;
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.8); }
+    }
+
+    h1 {
+      font-size: clamp(42px, 7vw, 82px);
+      font-weight: 900;
+      letter-spacing: -0.04em;
+      line-height: 1.05;
+      margin-bottom: 24px;
+      max-width: 900px;
+    }
+
+    .gradient-text {
+      background: linear-gradient(135deg, #818cf8, #a78bfa, #c084fc);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .hero-sub {
+      font-size: clamp(16px, 2.5vw, 20px);
+      color: var(--text2);
+      max-width: 560px;
+      margin: 0 auto 40px;
+      line-height: 1.65;
+      font-weight: 400;
+    }
+
+    .hero-actions {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .btn-hero {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: #fff;
+      border: none;
+      padding: 14px 32px;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+      font-family: inherit;
+      box-shadow: 0 4px 24px rgba(99,102,241,0.4), inset 0 1px 0 rgba(255,255,255,0.15);
+      transition: all 0.18s;
+      text-decoration: none;
+      display: inline-block;
+      letter-spacing: -0.01em;
+    }
+    .btn-hero:hover { transform: translateY(-2px); box-shadow: 0 8px 32px rgba(99,102,241,0.55); }
+
+    .btn-secondary {
+      background: transparent;
+      color: var(--text2);
+      border: 1px solid var(--border);
+      padding: 14px 28px;
+      border-radius: 12px;
+      font-size: 15px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.18s;
+      text-decoration: none;
+      display: inline-block;
+    }
+    .btn-secondary:hover { color: var(--text); border-color: rgba(255,255,255,0.15); }
+
+    .hero-proof {
+      margin-top: 52px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      color: var(--text2);
+      font-size: 13px;
+    }
+
+    .hero-proof-divider { width: 1px; height: 20px; background: var(--border); }
+
+    .hero-stars { color: #f59e0b; letter-spacing: 2px; }
+
+    /* ── MOCKUP ── */
+    .mockup-section {
+      padding: 0 24px 100px;
+      display: flex;
+      justify-content: center;
+    }
+
+    .mockup-wrap {
+      max-width: 900px;
+      width: 100%;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      overflow: hidden;
+      box-shadow: 0 40px 100px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.05);
+    }
+
+    .mockup-bar {
+      background: var(--bg3);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .mockup-dot { width: 12px; height: 12px; border-radius: 50%; }
+
+    .mockup-url {
+      flex: 1;
+      background: var(--bg);
+      border-radius: 6px;
+      padding: 5px 12px;
+      font-size: 12px;
+      color: var(--text2);
+      text-align: center;
+    }
+
+    .mockup-content {
+      padding: 28px;
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px;
+    }
+
+    .mockup-card {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      transition: transform 0.2s, border-color 0.2s;
+    }
+
+    .mockup-card:hover { transform: translateY(-3px); border-color: rgba(99,102,241,0.4); }
+
+    .mockup-card-tag {
+      font-size: 10px;
+      font-weight: 700;
+      color: #818cf8;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    .mockup-card-title {
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 6px;
+      line-height: 1.4;
+    }
+
+    .mockup-card-text {
+      font-size: 11px;
+      color: var(--text2);
+      line-height: 1.6;
+    }
+
+    .mockup-card-btn {
+      margin-top: 12px;
+      width: 100%;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      color: #fff;
+      border: none;
+      border-radius: 7px;
+      padding: 7px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: default;
+    }
+
+    /* ── STEPS ── */
+    .section { padding: 100px 24px; max-width: 1100px; margin: 0 auto; }
+
+    .section-label {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: #818cf8;
+      margin-bottom: 14px;
+      text-align: center;
+    }
+
+    .section-title {
+      font-size: clamp(30px, 4vw, 48px);
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      text-align: center;
+      margin-bottom: 16px;
+      line-height: 1.15;
+    }
+
+    .section-sub {
+      text-align: center;
+      color: var(--text2);
+      font-size: 16px;
+      margin-bottom: 64px;
+      max-width: 520px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+      position: relative;
+    }
+
+    .steps::before {
+      content: '';
+      position: absolute;
+      top: 36px; left: calc(16.6% + 36px); right: calc(16.6% + 36px);
+      height: 1px;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      opacity: 0.3;
+    }
+
+    .step {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: 16px;
+    }
+
+    .step-num {
+      width: 72px; height: 72px;
+      border-radius: 20px;
+      background: linear-gradient(135deg, rgba(99,102,241,0.15), rgba(139,92,246,0.15));
+      border: 1px solid rgba(99,102,241,0.25);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 28px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .step h3 { font-size: 17px; font-weight: 700; letter-spacing: -0.02em; }
+    .step p { font-size: 14px; color: var(--text2); line-height: 1.6; }
+
+    /* ── FEATURES ── */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 16px;
+    }
+
+    .feature-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px;
+      transition: border-color 0.2s, transform 0.2s;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .feature-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(99,102,241,0.4), transparent);
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    .feature-card:hover { border-color: rgba(99,102,241,0.25); transform: translateY(-2px); }
+    .feature-card:hover::before { opacity: 1; }
+
+    .feature-card.featured {
+      grid-column: span 2;
+      background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(139,92,246,0.05));
+      border-color: rgba(99,102,241,0.2);
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 32px;
+      align-items: center;
+    }
+
+    .feature-icon {
+      font-size: 32px;
+      margin-bottom: 14px;
+      display: block;
+    }
+
+    .feature-card h3 {
+      font-size: 19px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 8px;
+    }
+
+    .feature-card p {
+      font-size: 14px;
+      color: var(--text2);
+      line-height: 1.65;
+    }
+
+    .feature-visual {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .voice-bar {
+      height: 6px;
+      border-radius: 3px;
+      background: linear-gradient(90deg, #6366f1, #a78bfa);
+    }
+
+    /* ── SOCIAL PROOF ── */
+    .testimonials {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+
+    .testi {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+    }
+
+    .testi-stars { color: #f59e0b; font-size: 13px; margin-bottom: 12px; }
+
+    .testi p {
+      font-size: 14px;
+      color: var(--text2);
+      line-height: 1.65;
+      margin-bottom: 16px;
+      font-style: italic;
+    }
+
+    .testi-author {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .testi-avatar {
+      width: 36px; height: 36px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px;
+      font-weight: 700;
+      color: #fff;
+    }
+
+    .testi-name { font-size: 13px; font-weight: 600; }
+    .testi-role { font-size: 12px; color: var(--text2); }
+
+    /* ── CTA FINAL ── */
+    .cta-section {
+      padding: 100px 24px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .cta-glow {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      width: 600px; height: 400px;
+      background: radial-gradient(ellipse, rgba(99,102,241,0.12) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .cta-section h2 {
+      font-size: clamp(32px, 5vw, 56px);
+      font-weight: 900;
+      letter-spacing: -0.04em;
+      margin-bottom: 16px;
+      line-height: 1.1;
+    }
+
+    .cta-section p {
+      color: var(--text2);
+      font-size: 17px;
+      margin-bottom: 36px;
+    }
+
+    .cta-note {
+      margin-top: 16px;
+      font-size: 13px;
+      color: var(--text2);
+    }
+
+    /* ── FOOTER ── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 32px 40px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--text2);
+      font-size: 13px;
+    }
+
+    /* ── DIVIDER ── */
+    .divider {
+      max-width: 1100px;
+      margin: 0 auto;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--border), transparent);
+    }
+
+    /* ── RESPONSIVE ── */
+    @media (max-width: 768px) {
+      nav { padding: 0 20px; }
+      .steps { grid-template-columns: 1fr; }
+      .steps::before { display: none; }
+      .features-grid { grid-template-columns: 1fr; }
+      .feature-card.featured { grid-column: span 1; grid-template-columns: 1fr; }
+      .testimonials { grid-template-columns: 1fr; }
+      .mockup-content { grid-template-columns: 1fr; }
+      footer { flex-direction: column; gap: 12px; text-align: center; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-logo">
+    <div class="nav-logo-mark">✦</div>
+    AutoPost <span>CM</span>
+  </div>
+  <a href="/index.html" class="nav-cta">Probar gratis →</a>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="hero-glow"></div>
+  <div class="hero-glow-2"></div>
+
+  <div class="badge">
+    <span class="badge-dot"></span>
+    Impulsado por IA · Gratis para empezar
+  </div>
+
+  <h1>
+    De foto a caption<br>
+    en <span class="gradient-text">10 segundos</span>
+  </h1>
+
+  <p class="hero-sub">
+    Sube una imagen, la IA genera 3 captions distintos adaptados a tu negocio.
+    Aprueba, edita y publica. Sin agencias, sin esperas, sin excusas.
+  </p>
+
+  <div class="hero-actions">
+    <a href="/index.html" class="btn-hero">✦ Empezar gratis ahora</a>
+    <a href="#como-funciona" class="btn-secondary">Ver cómo funciona</a>
+  </div>
+
+  <div class="hero-proof">
+    <span class="hero-stars">★★★★★</span>
+    <span>Valorado por community managers</span>
+    <span class="hero-proof-divider"></span>
+    <span>Sin tarjeta de crédito</span>
+    <span class="hero-proof-divider"></span>
+    <span>Listo en 2 minutos</span>
+  </div>
+</section>
+
+<!-- MOCKUP -->
+<div class="mockup-section">
+  <div class="mockup-wrap">
+    <div class="mockup-bar">
+      <div class="mockup-dot" style="background:#ff5f57"></div>
+      <div class="mockup-dot" style="background:#febc2e"></div>
+      <div class="mockup-dot" style="background:#28c840"></div>
+      <div class="mockup-url">autopost-cm.app · Elige un caption</div>
+    </div>
+    <div class="mockup-content">
+      <div class="mockup-card">
+        <div class="mockup-card-tag">✨ Inspiracional</div>
+        <div class="mockup-card-title">"El arte que llevas en la piel cuenta tu historia"</div>
+        <div class="mockup-card-text">Cada trazo es único, como tú. Reserva tu cita y hagamos algo que te represente de verdad. #tattoo #ink #tatuaje</div>
+        <button class="mockup-card-btn">Usar esta →</button>
+      </div>
+      <div class="mockup-card" style="border-color: rgba(99,102,241,0.5); box-shadow: 0 0 20px rgba(99,102,241,0.1);">
+        <div class="mockup-card-tag" style="color:#a78bfa">💬 Cercano</div>
+        <div class="mockup-card-title">"¿Te has planteado alguna vez hacerte ese tatuaje que llevas años pensando?"</div>
+        <div class="mockup-card-text">Aquí estamos para convertir esa idea en realidad. DM para presupuesto sin compromiso. #tattooartist #tatuajes</div>
+        <button class="mockup-card-btn">Usar esta →</button>
+      </div>
+      <div class="mockup-card">
+        <div class="mockup-card-tag">🎯 Comercial</div>
+        <div class="mockup-card-title">"Agenda abierta para marzo — plazas limitadas"</div>
+        <div class="mockup-card-text">Diseños personalizados desde 80€. Consulta gratuita por DM. No dejamos de sorprender. #tattoo #blackwork</div>
+        <button class="mockup-card-btn">Usar esta →</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- CÓMO FUNCIONA -->
+<section class="section" id="como-funciona">
+  <div class="section-label">Proceso</div>
+  <h2 class="section-title">Tres pasos. Ninguna complicación.</h2>
+  <p class="section-sub">No necesitas saber de marketing ni de tecnología. Solo sube tu foto.</p>
+
+  <div class="steps">
+    <div class="step">
+      <div class="step-num">📸</div>
+      <h3>Sube tu imagen o vídeo</h3>
+      <p>Arrastra cualquier foto o vídeo de tu negocio. La IA lo analiza en segundos.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">✦</div>
+      <h3>Elige tu caption favorito</h3>
+      <p>Recibes 3 versiones distintas — inspiracional, cercana y comercial. Edítalas si quieres.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">🚀</div>
+      <h3>Publica o copia</h3>
+      <p>Aprueba y publica directamente en Instagram, o copia el caption con un clic.</p>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- FEATURES -->
+<section class="section" id="features">
+  <div class="section-label">Funcionalidades</div>
+  <h2 class="section-title">Todo lo que necesita<br>tu negocio en Instagram</h2>
+  <p class="section-sub">Herramientas pensadas para que publiques más en menos tiempo.</p>
+
+  <div class="features-grid">
+    <div class="feature-card featured">
+      <div>
+        <span class="feature-icon">🧠</span>
+        <h3>La IA aprende tu voz</h3>
+        <p>Cada vez que editas un caption antes de aprobarlo, AutoPost CM aprende tu estilo. Después de unos posts, los captions salen tan buenos que casi no necesitan edición. Tu tono, tus palabras, tus CTAs — sin explicarle nada.</p>
+      </div>
+      <div class="feature-visual">
+        <div style="font-size:11px; color: #818cf8; font-weight:700; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.5px;">Patrones aprendidos</div>
+        <div style="font-size:12px; color:#c4b5fd; line-height:2">1. Prefiere frases cortas y directas<br>2. Siempre incluye el precio o contacto<br>3. Usa tuteo informal<br>4. Evita los signos de exclamación<br>5. Los hashtags al final, separados</div>
+        <div style="margin-top:10px; display:flex; gap:6px; flex-direction:column">
+          <div class="voice-bar" style="width:85%"></div>
+          <div class="voice-bar" style="width:72%; opacity:0.7"></div>
+          <div class="voice-bar" style="width:60%; opacity:0.5"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="feature-card">
+      <span class="feature-icon">📅</span>
+      <h3>Semana completa desde una foto</h3>
+      <p>Sube una imagen y obtén 5 captions distintos — uno para cada día de la semana, con un ángulo diferente cada uno. Proceso, resultado, historia, oferta, comunidad.</p>
+    </div>
+
+    <div class="feature-card">
+      <span class="feature-icon">🕐</span>
+      <h3>Mejor hora para publicar</h3>
+      <p>La IA analiza tu sector y te dice exactamente en qué días y franjas horarias tu audiencia está más activa. Más engagement con el mismo esfuerzo.</p>
+    </div>
+
+    <div class="feature-card">
+      <span class="feature-icon">📱</span>
+      <h3>Mockup real de Instagram</h3>
+      <p>Ve exactamente cómo quedará tu post antes de publicar — con tu username, la imagen encuadrada y el caption en el formato real de Instagram.</p>
+    </div>
+
+    <div class="feature-card">
+      <span class="feature-icon">🎬</span>
+      <h3>Imágenes y vídeos</h3>
+      <p>Arrastra fotos o vídeos, varios a la vez si quieres. Para los vídeos se extrae automáticamente el mejor fotograma para analizarlo con IA.</p>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- TESTIMONIOS -->
+<section class="section" id="resenas">
+  <div class="section-label">Reseñas</div>
+  <h2 class="section-title">Lo que dicen quienes ya lo usan</h2>
+  <p class="section-sub">¿Ya lo has probado? Cuéntanos tu experiencia.</p>
+
+  <!-- Lista de reseñas -->
+  <div id="reviews-list" class="testimonials" style="margin-bottom: 40px;"></div>
+
+  <!-- Empty state -->
+  <div id="reviews-empty" class="reviews-empty" style="display:none">
+    <div class="reviews-empty-icon">💬</div>
+    <p>Sé el primero en dejar una reseña</p>
+  </div>
+
+  <!-- Formulario -->
+  <div class="review-form-wrap">
+    <h3 class="review-form-title">Deja tu reseña</h3>
+    <form id="review-form" class="review-form">
+      <div class="review-form-row">
+        <div class="review-field">
+          <label>Tu nombre *</label>
+          <input id="r-name" type="text" placeholder="Ej: María García" required maxlength="60" />
+        </div>
+        <div class="review-field">
+          <label>Tu sector / negocio</label>
+          <input id="r-role" type="text" placeholder="Ej: Tatuadora · Barcelona" maxlength="80" />
+        </div>
+      </div>
+      <div class="review-field">
+        <label>Valoración</label>
+        <div class="star-picker" id="star-picker">
+          <span class="star" data-v="1">★</span>
+          <span class="star" data-v="2">★</span>
+          <span class="star" data-v="3">★</span>
+          <span class="star" data-v="4">★</span>
+          <span class="star" data-v="5">★</span>
+        </div>
+      </div>
+      <div class="review-field">
+        <label>Tu experiencia *</label>
+        <textarea id="r-text" placeholder="Cuéntanos cómo te ha ayudado AutoPost CM..." rows="4" required maxlength="400"></textarea>
+      </div>
+      <div id="review-error" class="review-error" style="display:none"></div>
+      <button type="submit" class="btn-hero" style="font-size:14px; padding:12px 28px" id="review-submit">
+        Enviar reseña
+      </button>
+    </form>
+  </div>
+</section>
+
+<!-- CTA FINAL -->
+<section class="cta-section">
+  <div class="cta-glow"></div>
+  <h2>Tu Instagram merece<br><span class="gradient-text">contenido de verdad</span></h2>
+  <p>Empieza gratis hoy. Sin tarjeta de crédito. Sin complicaciones.</p>
+  <a href="/index.html" class="btn-hero" style="font-size:17px; padding:16px 40px">
+    ✦ Probar AutoPost CM gratis
+  </a>
+  <div class="cta-note">✓ Configuración en 2 minutos &nbsp;·&nbsp; ✓ Sin cuenta necesaria &nbsp;·&nbsp; ✓ Funciona para cualquier sector</div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="nav-logo" style="font-size:14px">
+    <div class="nav-logo-mark" style="width:26px;height:26px;font-size:13px;border-radius:7px">✦</div>
+    AutoPost <span>CM</span>
+  </div>
+  <span>Hecho con IA · Para negocios que quieren crecer en Instagram</span>
+  <span>© 2026 AutoPost CM</span>
+</footer>
+
+<style>
+/* ── Reseñas ── */
+.reviews-empty {
+  text-align: center;
+  padding: 48px;
+  color: var(--text2);
+  font-size: 15px;
+}
+.reviews-empty-icon { font-size: 40px; margin-bottom: 12px; }
+
+.review-form-wrap {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 32px;
+  max-width: 680px;
+  margin: 0 auto;
+}
+
+.review-form-title {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-bottom: 24px;
+}
+
+.review-form { display: flex; flex-direction: column; gap: 16px; }
+
+.review-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.review-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.review-field label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text2);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.review-field input,
+.review-field textarea {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 10px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  transition: border-color 0.18s, box-shadow 0.18s;
+  width: 100%;
+}
+
+.review-field input:focus,
+.review-field textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.15);
+}
+
+.review-field input::placeholder,
+.review-field textarea::placeholder { color: #4a4d65; }
+
+/* Estrellas */
+.star-picker { display: flex; gap: 4px; }
+
+.star {
+  font-size: 28px;
+  color: #2d2d45;
+  cursor: pointer;
+  transition: color 0.12s, transform 0.12s;
+  user-select: none;
+}
+
+.star.active { color: #f59e0b; }
+.star:hover { transform: scale(1.15); }
+
+.review-error {
+  padding: 10px 14px;
+  background: rgba(244,63,94,0.1);
+  border: 1px solid rgba(244,63,94,0.25);
+  border-radius: 8px;
+  color: #f43f5e;
+  font-size: 13px;
+}
+
+/* Cards de reseñas dinámicas */
+.testi-new {
+  animation: fadeInUp 0.4s ease;
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 600px) {
+  .review-form-row { grid-template-columns: 1fr; }
+}
+</style>
+
+<script>
+  const COLORS = [
+    'linear-gradient(135deg,#6366f1,#8b5cf6)',
+    'linear-gradient(135deg,#ec4899,#f43f5e)',
+    'linear-gradient(135deg,#10b981,#059669)',
+    'linear-gradient(135deg,#f59e0b,#ea580c)',
+    'linear-gradient(135deg,#06b6d4,#3b82f6)',
+  ];
+
+  function initials(name) {
+    return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+  }
+
+  function renderReview(r, prepend = false) {
+    const color = COLORS[r.id % COLORS.length];
+    const stars = '★'.repeat(r.rating) + '☆'.repeat(5 - r.rating);
+    const el = document.createElement('div');
+    el.className = 'testi testi-new';
+    el.innerHTML = `
+      <div class="testi-stars" style="color:#f59e0b">${stars}</div>
+      <p>"${r.text}"</p>
+      <div class="testi-author">
+        <div class="testi-avatar" style="background:${color}">${initials(r.name)}</div>
+        <div>
+          <div class="testi-name">${r.name}</div>
+          <div class="testi-role">${r.role || 'Usuario de AutoPost CM'}</div>
+        </div>
+      </div>`;
+    const list = document.getElementById('reviews-list');
+    prepend ? list.prepend(el) : list.appendChild(el);
+  }
+
+  async function loadReviews() {
+    try {
+      const res = await fetch('/api/reviews');
+      const reviews = await res.json();
+      const list = document.getElementById('reviews-list');
+      const empty = document.getElementById('reviews-empty');
+      list.innerHTML = '';
+      if (!reviews.length) { empty.style.display = 'block'; return; }
+      empty.style.display = 'none';
+      reviews.forEach(r => renderReview(r));
+    } catch(e) {
+      document.getElementById('reviews-empty').style.display = 'block';
+    }
+  }
+
+  // Star picker
+  let selectedRating = 5;
+  document.querySelectorAll('.star').forEach(star => {
+    star.addEventListener('click', () => {
+      selectedRating = parseInt(star.dataset.v);
+      document.querySelectorAll('.star').forEach(s => {
+        s.classList.toggle('active', parseInt(s.dataset.v) <= selectedRating);
+      });
+    });
+    star.addEventListener('mouseenter', () => {
+      document.querySelectorAll('.star').forEach(s => {
+        s.classList.toggle('active', parseInt(s.dataset.v) <= parseInt(star.dataset.v));
+      });
+    });
+    star.addEventListener('mouseleave', () => {
+      document.querySelectorAll('.star').forEach(s => {
+        s.classList.toggle('active', parseInt(s.dataset.v) <= selectedRating);
+      });
+    });
+  });
+  // Init stars at 5
+  document.querySelectorAll('.star').forEach(s => s.classList.add('active'));
+
+  // Form submit
+  document.getElementById('review-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const btn = document.getElementById('review-submit');
+    const errEl = document.getElementById('review-error');
+    const name = document.getElementById('r-name').value.trim();
+    const role = document.getElementById('r-role').value.trim();
+    const text = document.getElementById('r-text').value.trim();
+    errEl.style.display = 'none';
+
+    btn.textContent = 'Enviando...';
+    btn.disabled = true;
+
+    try {
+      const res = await fetch('/api/reviews', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, role, text, rating: selectedRating })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      document.getElementById('reviews-empty').style.display = 'none';
+      renderReview(data.entry, true);
+      document.getElementById('review-form').reset();
+      selectedRating = 5;
+      document.querySelectorAll('.star').forEach(s => s.classList.add('active'));
+      btn.textContent = '✅ Reseña enviada';
+      setTimeout(() => { btn.textContent = 'Enviar reseña'; btn.disabled = false; }, 2500);
+    } catch(err) {
+      errEl.textContent = err.message || 'Error al enviar la reseña';
+      errEl.style.display = 'block';
+      btn.textContent = 'Enviar reseña';
+      btn.disabled = false;
+    }
+  });
+
+  loadReviews();
+</script>
+
+</body>
+</html>

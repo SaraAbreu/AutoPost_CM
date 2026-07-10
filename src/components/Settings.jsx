@@ -5,21 +5,27 @@ const TONOS = ['Profesional', 'Cercano', 'Inspiracional', 'Divertido'];
 
 export default function Settings() {
   const [form, setForm] = useState({
-    nombre: '', instagram: '', sector: '', ciudad: '', servicios: '', tono: 'Cercano', cta: '', hashtags: ''
+    nombre: '', instagram: '', sector: '', ciudad: '', servicios: '', tono: 'Cercano', cta: '', hashtags: '', modulo: 'generico'
   });
   const [saved, setSaved] = useState(false);
   const [loading, setLoading] = useState(true);
   const [voice, setVoice] = useState({ count: 0, patterns: null });
+  const [modules, setModules] = useState([]);
 
   useEffect(() => {
     Promise.all([
       fetch('/api/profile').then(r => r.json()),
-      fetch('/api/voice').then(r => r.json())
-    ]).then(([profile, voiceData]) => {
+      fetch('/api/voice').then(r => r.json()),
+      fetch('/api/modules').then(r => r.json())
+    ]).then(([profile, voiceData, modulesData]) => {
       if (profile) setForm(f => ({ ...f, ...profile }));
       if (voiceData) setVoice(voiceData);
+      if (modulesData) setModules(modulesData);
     }).finally(() => setLoading(false));
   }, []);
+
+  const activeModule = modules.find(m => m.id === form.modulo);
+  const extraFields = activeModule?.extraFields ?? [];
 
   function update(e) {
     setSaved(false);
@@ -47,6 +53,16 @@ export default function Settings() {
 
       <form className="settings-form" onSubmit={save}>
         <div className="settings-grid">
+
+          <div className="field-group full">
+            <label>Vertical / módulo</label>
+            <select name="modulo" value={form.modulo} onChange={update}>
+              {(modules.length ? modules : [{ id: 'generico', label: 'Genérico (cualquier negocio)' }]).map(m => (
+                <option key={m.id} value={m.id}>{m.label}</option>
+              ))}
+            </select>
+            <p className="field-hint">Adapta el prompt, el compliance y el calendario de contenido a tu sector.</p>
+          </div>
 
           <div className="field-group">
             <label>Nombre de la empresa *</label>
@@ -105,6 +121,18 @@ export default function Settings() {
               placeholder="Ej: #SegurosGarcía #TuSeguroDeConfianza #MadridSeguros"
             />
           </div>
+
+          {extraFields.map(f => (
+            <div className="field-group full" key={f.name}>
+              <label>{f.label}</label>
+              <input
+                name={f.name}
+                value={form[f.name] ?? ''}
+                onChange={update}
+                placeholder={f.placeholder}
+              />
+            </div>
+          ))}
 
         </div>
 

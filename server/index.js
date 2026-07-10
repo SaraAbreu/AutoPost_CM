@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import 'dotenv/config';
+import { getModule, listModules } from './modules/index.js';
 
 const __file = path.dirname(fileURLToPath(import.meta.url));
 const PROFILE_PATH = path.join(__file, 'profile.json');
@@ -94,6 +95,13 @@ app.post('/api/generate', upload.single('image'), async (req, res) => {
     const base64 = req.file.buffer.toString('base64');
     const mimeType = req.file.mimetype;
 
+    const profile = loadProfile();
+    const module = getModule(profile.modulo);
+    const moduleExtra = module.promptExtra ? module.promptExtra(profile) : '';
+    const complianceExtra = module.compliance ? module.compliance(profile) : '';
+    const tones = (module.tones && module.tones.length === 3) ? module.tones : getModule('generico').tones;
+    const toneLines = tones.map((t, i) => `- Opción ${i + 1}: ${t.angle}`).join('\n');
+
     const payload = {
       model: 'meta-llama/llama-4-scout-17b-16e-instruct',
       messages: [{
@@ -105,9 +113,10 @@ app.post('/api/generate', upload.single('image'), async (req, res) => {
           },
           {
             type: 'text',
-            text: `Eres community manager experto en Instagram para pymes hispanohablantes.
+            text: `Eres un experto community manager de Instagram especializado en negocios hispanohablantes de cualquier sector.
 
-${profileContext(loadProfile())}${voiceContext()}Analiza la imagen y genera EXACTAMENTE 3 captions distintos listos para publicar en Instagram, en español. Cada uno debe tener un tono diferente: el primero inspiracional, el segundo cercano/conversacional, el tercero directo/comercial.
+${profileContext(profile)}${moduleExtra}${voiceContext()}Analiza la imagen y genera EXACTAMENTE 3 captions distintos listos para publicar en Instagram, en español. Adapta el lenguaje, tono y referencias al sector de la marca. Cada opción debe tener un enfoque diferente:
+${toneLines}
 
 Formato OBLIGATORIO — respeta los separadores exactos:
 
@@ -119,12 +128,12 @@ Formato OBLIGATORIO — respeta los separadores exactos:
 [caption completo]
 
 Cada caption debe tener:
-- Primera línea: frase gancho impactante
-- 2-3 frases conectando la imagen con un producto o servicio
-- Llamada a la acción clara
-- 5 hashtags relevantes al final
-
-NO incluyas descripciones, explicaciones ni texto fuera de los separadores. Máximo 2200 caracteres por caption.`
+- Primera línea: gancho que para el scroll
+- 2-3 frases que conecten la imagen con el negocio de forma natural
+- Llamada a la acción clara y específica para el sector
+- 5 hashtags relevantes para el sector y el contenido
+${complianceExtra}
+NO pongas placeholders como [nombre], [empresa] ni texto fuera de los separadores. Máximo 2200 caracteres por caption.`
           }
         ]
       }],
@@ -155,10 +164,77 @@ NO incluyas descripciones, explicaciones ni texto fuera de los separadores. Máx
     };
     history.unshift(entry);
 
-    res.json({ captions: captionList, id: entry.id });
+    res.json({ captions: captionList, id: entry.id, tones: tones.map(t => t.label) });
   } catch (err) {
     console.error('Error en /api/generate:', err.response?.data || err.message);
     res.status(500).json({ error: 'Error generando caption', detail: err.message });
+  }
+});
+
+// ─── API: Semana de contenido ────────────────────────────────────────────────
+app.post('/api/generate-week', upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No se recibio imagen' });
+
+    const base64 = req.file.buffer.toString('base64');
+    const mimeType = req.file.mimetype;
+
+    const profile = loadProfile();
+    const module = getModule(profile.modulo);
+    const moduleExtra = module.promptExtra ? module.promptExtra(profile) : '';
+    const complianceExtra = module.compliance ? module.compliance(profile) : '';
+    const angles = (module.calendarAngles && module.calendarAngles.length === 5)
+      ? module.calendarAngles
+      : getModule('generico').calendarAngles;
+    const angleBlocks = angles.map(a => `===${a.day}===\n[ángulo ${a.angle}]`).join('\n');
+
+    const payload = {
+      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
+          {
+            type: 'text',
+            text: `Eres un experto community manager de Instagram especializado en negocios hispanohablantes de cualquier sector.
+
+${profileContext(profile)}${moduleExtra}${voiceContext()}Analiza la imagen y genera EXACTAMENTE 5 captions para publicar de lunes a viernes. Adapta cada ángulo al sector y tipo de negocio de la marca — los ángulos son universales pero el contenido debe sonar auténtico para ese sector concreto.
+
+Formato OBLIGATORIO — respeta los separadores exactos:
+
+${angleBlocks}
+
+Cada caption: gancho que pare el scroll, 2-3 frases naturales para el sector, CTA específico, 5 hashtags del sector.
+${complianceExtra}
+NO pongas placeholders. NO incluyas texto fuera de los separadores. Máximo 1500 caracteres por caption.`
+          }
+        ]
+      }],
+      max_tokens: 2500
+    };
+
+    const response = await axios.post(
+      'https://api.groq.com/openai/v1/chat/completions',
+      payload,
+      { headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}`, 'Content-Type': 'application/json' } }
+    );
+
+    const raw = response.data.choices[0].message.content.replace(/\\#/g, '#');
+
+    const week = angles.map(a => {
+      const regex = new RegExp(`===${a.day}===([\\s\\S]*?)(?:===|$)`);
+      const match = raw.match(regex);
+      return {
+        day: a.day,
+        angle: a.label,
+        caption: match ? match[1].trim() : ''
+      };
+    }).filter(d => d.caption);
+
+    res.json({ week, image: `data:${mimeType};base64,${base64}` });
+  } catch (err) {
+    console.error('Error en /api/generate-week:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Error generando semana', detail: err.message });
   }
 });
 
@@ -239,6 +315,9 @@ app.post('/api/reject', (req, res) => {
   res.json({ success: true });
 });
 
+// ─── API: Módulos verticales disponibles ────────────────────────────────────
+app.get('/api/modules', (req, res) => res.json(listModules()));
+
 // ─── API: Perfil de marca ────────────────────────────────────────────────────
 app.get('/api/profile', (req, res) => res.json(loadProfile()));
 
@@ -248,6 +327,69 @@ app.post('/api/profile', express.json(), (req, res) => {
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'No se pudo guardar el perfil' });
+  }
+});
+
+// ─── API: Reseñas ────────────────────────────────────────────────────────────
+const REVIEWS_PATH = path.join(__file, 'reviews.json');
+
+function loadReviews() {
+  try { return JSON.parse(fs.readFileSync(REVIEWS_PATH, 'utf8')); }
+  catch { return []; }
+}
+
+app.get('/api/reviews', (req, res) => res.json(loadReviews()));
+
+app.post('/api/reviews', (req, res) => {
+  const { name, role, text, rating } = req.body;
+  if (!name?.trim() || !text?.trim()) return res.status(400).json({ error: 'Nombre y reseña son obligatorios' });
+  const reviews = loadReviews();
+  const entry = {
+    id: Date.now(),
+    name: name.trim(),
+    role: role?.trim() || '',
+    text: text.trim(),
+    rating: Math.min(5, Math.max(1, parseInt(rating) || 5)),
+    date: new Date().toISOString()
+  };
+  reviews.unshift(entry);
+  fs.writeFileSync(REVIEWS_PATH, JSON.stringify(reviews, null, 2), 'utf8');
+  res.json({ success: true, entry });
+});
+
+// ─── API: Mejor hora para publicar ──────────────────────────────────────────
+app.post('/api/best-time', async (req, res) => {
+  const { sector, caption } = req.body;
+  try {
+    const response = await axios.post(
+      'https://api.groq.com/openai/v1/chat/completions',
+      {
+        model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+        messages: [{
+          role: 'user',
+          content: `Eres un experto en estrategia de Instagram con datos de engagement por sector.
+
+Sector del negocio: ${sector || 'negocio general'}
+Primeras palabras del caption: "${(caption || '').slice(0, 120)}"
+
+Basándote en patrones reales de engagement en Instagram para este sector, responde en este formato JSON exacto (sin markdown, sin explicación extra):
+{
+  "dias": ["Jueves", "Viernes"],
+  "horas": "18:00 – 20:00",
+  "razon": "Una frase corta explicando por qué ese momento funciona para este sector específico"
+}`
+        }],
+        max_tokens: 200
+      },
+      { headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}`, 'Content-Type': 'application/json' } }
+    );
+
+    const raw = response.data.choices[0].message.content.trim();
+    const json = JSON.parse(raw.match(/\{[\s\S]*\}/)[0]);
+    res.json(json);
+  } catch (err) {
+    console.error('Error en /api/best-time:', err.message);
+    res.status(500).json({ error: 'No se pudo calcular' });
   }
 });
 

@@ -195,6 +195,60 @@
 
 .review-hint { font-size: 13px; color: var(--text2); }
 
+/* ── Mejor hora ── */
+.best-time-card {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.best-time-header {
+  margin-bottom: 12px;
+}
+
+.best-time-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.best-time-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text2);
+}
+
+.best-time-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.best-time-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+}
+
+.best-time-label { color: var(--text2); }
+
+.best-time-value {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.best-time-reason {
+  font-size: 12px;
+  color: var(--text2);
+  line-height: 1.5;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
 /* ── Selector de variantes ── */
 .variants-grid {
   display: grid;
