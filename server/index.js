@@ -26,7 +26,76 @@ const VOICE_PATH   = path.join(__file, 'voice.json');
 const TMP_UPLOADS_DIR = path.join(__file, 'tmp-uploads');
 fs.mkdirSync(TMP_UPLOADS_DIR, { recursive: true });
 
-function loadProfile() {
+// ─── Demo pública: límite diario + aislamiento por sesión (opcional) ────────
+// Si defines DEMO_DAILY_LIMIT (ej. "3"), esta instancia se considera una demo
+// pública abierta a cualquiera, y pasan dos cosas a la vez:
+//   1. Cada IP solo puede generar ese número de veces al día (protege la
+//      cuota gratuita de Groq/Pollinations).
+//   2. Cada visitante (identificado por una cookie anónima, sin login) tiene
+//      SU PROPIO perfil de marca, historial y voz aprendida en memoria — así
+//      nadie pisa lo que está probando otra persona en la misma URL.
+// Sin DEMO_DAILY_LIMIT (un despliegue de cliente real, ej. Objetiva Broker),
+// todo sigue exactamente como antes: un único perfil/historial compartido
+// guardado en disco, que es lo correcto para un solo negocio real.
+const DEMO_DAILY_LIMIT = parseInt(process.env.DEMO_DAILY_LIMIT, 10) || 0;
+const DEMO_MODE = DEMO_DAILY_LIMIT > 0;
+const demoUsage = new Map();        // "ip|YYYY-MM-DD" -> nº de usos ese día
+const sessionProfiles = new Map();  // sid -> perfil de esa sesión
+const sessionVoices = new Map();    // sid -> { examples, patterns, lastAnalyzed }
+const sessionHistories = new Map(); // sid -> historial de esa sesión
+
+function parseCookies(req) {
+  const header = req.headers.cookie;
+  if (!header) return {};
+  return Object.fromEntries(header.split(';').map(c => {
+    const idx = c.indexOf('=');
+    return idx === -1 ? [c.trim(), ''] : [c.slice(0, idx).trim(), decodeURIComponent(c.slice(idx + 1).trim())];
+  }));
+}
+
+// Asigna a cada visitante una cookie anónima (demo_sid) para darle su propio
+// espacio aislado. Solo actúa si DEMO_MODE está activo — en un despliegue de
+// cliente real no hace nada (req.sid queda null y todo usa el disco compartido).
+function sessionMiddleware(req, res, next) {
+  if (!DEMO_MODE) { req.sid = null; return next(); }
+  const cookies = parseCookies(req);
+  let sid = cookies.demo_sid;
+  if (!sid) {
+    sid = crypto.randomUUID();
+    res.setHeader('Set-Cookie', `demo_sid=${sid}; Max-Age=${30 * 24 * 3600}; Path=/; HttpOnly; SameSite=Lax`);
+  }
+  req.sid = sid;
+  next();
+}
+
+function demoLimitGuard(req, res, next) {
+  if (!DEMO_MODE) return next(); // sin límite configurado, comportamiento normal
+  const ip = (req.headers['x-forwarded-for']?.split(',')[0].trim()) || req.socket.remoteAddress || 'unknown';
+  const today = new Date().toISOString().slice(0, 10);
+  const key = `${ip}|${today}`;
+  const used = demoUsage.get(key) || 0;
+  if (used >= DEMO_DAILY_LIMIT) {
+    return res.status(429).json({
+      error: `Has usado tus ${DEMO_DAILY_LIMIT} generaciones gratis de hoy. Pide tu prueba completa para seguir sin límite.`,
+      limitReached: true,
+      limit: DEMO_DAILY_LIMIT
+    });
+  }
+  demoUsage.set(key, used + 1);
+  next();
+}
+
+// sid presente (demo pública) -> perfil/voz/historial propios de esa sesión,
+// en memoria. sid null (cliente real) -> el fichero compartido de siempre.
+function loadProfile(sid) {
+  if (sid) {
+    if (!sessionProfiles.has(sid)) {
+      let base = {};
+      try { base = JSON.parse(fs.readFileSync(DEFAULT_PROFILE_PATH, 'utf8')); } catch {}
+      sessionProfiles.set(sid, { ...base });
+    }
+    return sessionProfiles.get(sid);
+  }
   try { return JSON.parse(fs.readFileSync(PROFILE_PATH, 'utf8')); }
   catch {
     try { return JSON.parse(fs.readFileSync(DEFAULT_PROFILE_PATH, 'utf8')); }
@@ -34,13 +103,31 @@ function loadProfile() {
   }
 }
 
-function loadVoice() {
+function saveProfile(sid, data) {
+  if (sid) { sessionProfiles.set(sid, data); return; }
+  fs.writeFileSync(PROFILE_PATH, JSON.stringify(data, null, 2), 'utf8');
+}
+
+function loadVoice(sid) {
+  if (sid) {
+    if (!sessionVoices.has(sid)) sessionVoices.set(sid, { examples: [], patterns: null });
+    return sessionVoices.get(sid);
+  }
   try { return JSON.parse(fs.readFileSync(VOICE_PATH, 'utf8')); }
   catch { return { examples: [], patterns: null }; }
 }
 
-function saveVoice(data) {
+function saveVoice(sid, data) {
+  if (sid) { sessionVoices.set(sid, data); return; }
   fs.writeFileSync(VOICE_PATH, JSON.stringify(data, null, 2), 'utf8');
+}
+
+function getHistory(sid) {
+  if (sid) {
+    if (!sessionHistories.has(sid)) sessionHistories.set(sid, []);
+    return sessionHistories.get(sid);
+  }
+  return history;
 }
 
 async function analyzeVoice(examples) {
@@ -82,15 +169,15 @@ function profileContext(p) {
   return `CONTEXTO DE MARCA (úsalo siempre, no pongas placeholders):\n${lines.join('\n')}\n\n`;
 }
 
-function voiceContext() {
-  const { patterns } = loadVoice();
+function voiceContext(sid) {
+  const { patterns } = loadVoice(sid);
   if (!patterns) return '';
   return `ESTILO APRENDIDO DEL USUARIO (respétalos estrictamente):\n${patterns}\n\n`;
 }
 
 // Genera UN caption para UNA imagen con UN ángulo concreto. La usan tanto
 // /api/generate-day como /api/generate-week cuando hay varias fotos (una por día).
-async function generateCaptionForAngle(base64, mimeType, profile, module, angleDef) {
+async function generateCaptionForAngle(base64, mimeType, profile, module, angleDef, sid) {
   const moduleExtra = module.promptExtra ? module.promptExtra(profile) : '';
   const complianceExtra = module.compliance ? module.compliance(profile) : '';
 
@@ -104,7 +191,7 @@ async function generateCaptionForAngle(base64, mimeType, profile, module, angleD
           type: 'text',
           text: `Eres un experto community manager de Instagram especializado en negocios hispanohablantes de cualquier sector.
 
-${profileContext(profile)}${moduleExtra}${voiceContext()}Analiza esta imagen y genera UN ÚNICO caption para Instagram con este ángulo: ${angleDef.angle}
+${profileContext(profile)}${moduleExtra}${voiceContext(sid)}Analiza esta imagen y genera UN ÚNICO caption para Instagram con este ángulo: ${angleDef.angle}
 
 Debe tener: primera línea con gancho que pare el scroll, 2-3 frases naturales que conecten la imagen con el negocio, llamada a la acción específica para el sector, y 5 hashtags relevantes.
 ${complianceExtra}
@@ -129,33 +216,9 @@ const PORT = process.env.PORT || 3001;
 const IS_PROD = process.env.NODE_ENV === 'production';
 app.set('trust proxy', true); // necesario para leer la IP real detrás de Railway/Hostinger/etc.
 
-// ─── Límite diario de la demo pública (opcional) ─────────────────────────────
-// Si defines DEMO_DAILY_LIMIT (ej. "3"), cada IP solo puede generar ese número
-// de captions/imágenes al día — pensado SOLO para el despliegue de demo pública
-// abierta (sin login), para no dejar la cuota gratuita de Groq/Pollinations a
-// merced de cualquiera. NO definir esta variable en un despliegue de cliente
-// real (Objetiva Broker, etc.) — ahí el uso debe ser ilimitado.
-const DEMO_DAILY_LIMIT = parseInt(process.env.DEMO_DAILY_LIMIT, 10) || 0;
-const demoUsage = new Map(); // "ip|YYYY-MM-DD" -> nº de usos ese día
-
-function demoLimitGuard(req, res, next) {
-  if (!DEMO_DAILY_LIMIT) return next(); // sin límite configurado, comportamiento normal
-  const ip = (req.headers['x-forwarded-for']?.split(',')[0].trim()) || req.socket.remoteAddress || 'unknown';
-  const today = new Date().toISOString().slice(0, 10);
-  const key = `${ip}|${today}`;
-  const used = demoUsage.get(key) || 0;
-  if (used >= DEMO_DAILY_LIMIT) {
-    return res.status(429).json({
-      error: `Has usado tus ${DEMO_DAILY_LIMIT} generaciones gratis de hoy. Pide tu prueba completa para seguir sin límite.`,
-      limitReached: true,
-      limit: DEMO_DAILY_LIMIT
-    });
-  }
-  demoUsage.set(key, used + 1);
-  next();
-}
-
-// Historial en memoria (en produccion se podria usar SQLite)
+// Historial en memoria (en produccion se podria usar SQLite) — usado tal cual
+// solo cuando no hay sesión (cliente real); en demo pública cada sesión tiene
+// el suyo propio en sessionHistories (ver getHistory más arriba).
 const history = [];
 
 // Multer — almacena en memoria para pasarlo a Groq como base64
@@ -167,6 +230,7 @@ const upload = multer({
 app.use(cors());
 app.use(express.json());
 app.use('/tmp-uploads', express.static(TMP_UPLOADS_DIR));
+app.use('/api', sessionMiddleware); // asigna/lee la cookie demo_sid (solo si DEMO_MODE)
 
 // ─── Autenticación básica (opcional) ─────────────────────────────────────────
 // Si defines APP_PASSWORD en el .env, toda la app (frontend + API) pide contraseña
@@ -194,7 +258,7 @@ app.post('/api/generate', demoLimitGuard, upload.single('image'), async (req, re
     const base64 = req.file.buffer.toString('base64');
     const mimeType = req.file.mimetype;
 
-    const profile = loadProfile();
+    const profile = loadProfile(req.sid);
     const module = getModule(profile.modulo);
     const moduleExtra = module.promptExtra ? module.promptExtra(profile) : '';
     const complianceExtra = module.compliance ? module.compliance(profile) : '';
@@ -214,7 +278,7 @@ app.post('/api/generate', demoLimitGuard, upload.single('image'), async (req, re
             type: 'text',
             text: `Eres un experto community manager de Instagram especializado en negocios hispanohablantes de cualquier sector.
 
-${profileContext(profile)}${moduleExtra}${voiceContext()}Analiza la imagen y genera EXACTAMENTE 3 captions distintos listos para publicar en Instagram, en español. Adapta el lenguaje, tono y referencias al sector de la marca. Cada opción debe tener un enfoque diferente:
+${profileContext(profile)}${moduleExtra}${voiceContext(req.sid)}Analiza la imagen y genera EXACTAMENTE 3 captions distintos listos para publicar en Instagram, en español. Adapta el lenguaje, tono y referencias al sector de la marca. Cada opción debe tener un enfoque diferente:
 ${toneLines}
 
 Formato OBLIGATORIO — respeta los separadores exactos:
@@ -261,7 +325,7 @@ NO pongas placeholders como [nombre], [empresa] ni texto fuera de los separadore
       image: `data:${mimeType};base64,${base64}`,
       status: 'pending'
     };
-    history.unshift(entry);
+    getHistory(req.sid).unshift(entry);
 
     res.json({ captions: captionList, id: entry.id, tones: tones.map(t => t.label) });
   } catch (err) {
@@ -278,7 +342,7 @@ app.post('/api/generate-week', demoLimitGuard, upload.array('images', 5), async 
   try {
     if (!req.files || !req.files.length) return res.status(400).json({ error: 'No se recibio imagen' });
 
-    const profile = loadProfile();
+    const profile = loadProfile(req.sid);
     const module = getModule(profile.modulo);
     const angles = (module.calendarAngles && module.calendarAngles.length === 5)
       ? module.calendarAngles
@@ -302,7 +366,7 @@ app.post('/api/generate-week', demoLimitGuard, upload.array('images', 5), async 
               type: 'text',
               text: `Eres un experto community manager de Instagram especializado en negocios hispanohablantes de cualquier sector.
 
-${profileContext(profile)}${moduleExtra}${voiceContext()}Analiza la imagen y genera EXACTAMENTE 5 captions para publicar de lunes a viernes. Adapta cada ángulo al sector y tipo de negocio de la marca — los ángulos son universales pero el contenido debe sonar auténtico para ese sector concreto.
+${profileContext(profile)}${moduleExtra}${voiceContext(req.sid)}Analiza la imagen y genera EXACTAMENTE 5 captions para publicar de lunes a viernes. Adapta cada ángulo al sector y tipo de negocio de la marca — los ángulos son universales pero el contenido debe sonar auténtico para ese sector concreto.
 
 Formato OBLIGATORIO — respeta los separadores exactos:
 
@@ -340,7 +404,7 @@ NO pongas placeholders. NO incluyas texto fuera de los separadores. Máximo 1500
       const file = req.files[i % req.files.length];
       const base64 = file.buffer.toString('base64');
       const mimeType = file.mimetype;
-      const caption = await generateCaptionForAngle(base64, mimeType, profile, module, a);
+      const caption = await generateCaptionForAngle(base64, mimeType, profile, module, a, req.sid);
       return { day: a.day, angle: a.label, caption, image: `data:${mimeType};base64,${base64}` };
     }));
 
@@ -360,14 +424,14 @@ app.post('/api/generate-day', demoLimitGuard, upload.single('image'), async (req
     const base64 = req.file.buffer.toString('base64');
     const mimeType = req.file.mimetype;
 
-    const profile = loadProfile();
+    const profile = loadProfile(req.sid);
     const module = getModule(profile.modulo);
     const angles = (module.calendarAngles && module.calendarAngles.length === 5)
       ? module.calendarAngles
       : getModule('generico').calendarAngles;
     const angleDef = angles.find(a => a.day === day) || angles[0];
 
-    const caption = await generateCaptionForAngle(base64, mimeType, profile, module, angleDef);
+    const caption = await generateCaptionForAngle(base64, mimeType, profile, module, angleDef, req.sid);
     res.json({ caption });
   } catch (err) {
     console.error('Error en /api/generate-day:', err.response?.data || err.message);
@@ -387,7 +451,7 @@ app.post('/api/generate-image', demoLimitGuard, async (req, res) => {
       return res.status(400).json({ error: 'Falta describir qué imagen generar' });
     }
 
-    const profile = loadProfile();
+    const profile = loadProfile(req.sid);
     const module = getModule(profile.modulo);
     const imageStyle = module.imageStyle || getModule('generico').imageStyle;
 
@@ -412,7 +476,7 @@ app.post('/api/publish', async (req, res) => {
   const { id, caption, originalCaption, imageBase64 } = req.body;
 
   // Actualizar historial
-  const entry = history.find(h => h.id === id);
+  const entry = getHistory(req.sid).find(h => h.id === id);
   // Fuente de la imagen real: preferimos la que el servidor guardó en /api/generate
   // (un data URI base64 fiable) en vez de la que manda el cliente en imageBase64,
   // que en el flujo actual del frontend es un blob: URL local del navegador —
@@ -427,18 +491,18 @@ app.post('/api/publish', async (req, res) => {
   // Guardar par para aprendizaje de voz (solo si el usuario editó)
   let voiceExamples = 0;
   if (originalCaption && caption && originalCaption.trim() !== caption.trim()) {
-    const voice = loadVoice();
+    const voice = loadVoice(req.sid);
     voice.examples.push({ original: originalCaption.trim(), final: caption.trim(), date: new Date().toISOString() });
-    saveVoice(voice);
+    saveVoice(req.sid, voice);
     voiceExamples = voice.examples.length;
 
     // Analizar patrones a partir de 3 ejemplos (en background, sin bloquear respuesta)
     if (voiceExamples >= 3) {
       analyzeVoice(voice.examples).then(patterns => {
-        const v = loadVoice();
+        const v = loadVoice(req.sid);
         v.patterns = patterns;
         v.lastAnalyzed = new Date().toISOString();
-        saveVoice(v);
+        saveVoice(req.sid, v);
         console.log(`Voz actualizada con ${voiceExamples} ejemplos`);
       }).catch(err => console.error('Error analizando voz:', err.message));
     }
@@ -504,7 +568,7 @@ app.post('/api/publish', async (req, res) => {
 // ─── API: Rechazar ───────────────────────────────────────────────────────────
 app.post('/api/reject', (req, res) => {
   const { id } = req.body;
-  const entry = history.find(h => h.id === id);
+  const entry = getHistory(req.sid).find(h => h.id === id);
   if (entry) entry.status = 'rejected';
   res.json({ success: true });
 });
@@ -513,11 +577,11 @@ app.post('/api/reject', (req, res) => {
 app.get('/api/modules', (req, res) => res.json(listModules()));
 
 // ─── API: Perfil de marca ────────────────────────────────────────────────────
-app.get('/api/profile', (req, res) => res.json(loadProfile()));
+app.get('/api/profile', (req, res) => res.json(loadProfile(req.sid)));
 
 app.post('/api/profile', express.json(), (req, res) => {
   try {
-    fs.writeFileSync(PROFILE_PATH, JSON.stringify(req.body, null, 2), 'utf8');
+    saveProfile(req.sid, req.body);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'No se pudo guardar el perfil' });
@@ -638,13 +702,13 @@ Basándote en patrones reales de engagement en Instagram para este sector, respo
 
 // ─── API: Voz aprendida ──────────────────────────────────────────────────────
 app.get('/api/voice', (req, res) => {
-  const { examples, patterns, lastAnalyzed } = loadVoice();
+  const { examples, patterns, lastAnalyzed } = loadVoice(req.sid);
   res.json({ count: examples.length, patterns, lastAnalyzed });
 });
 
 // ─── API: Historial ──────────────────────────────────────────────────────────
 app.get('/api/history', (req, res) => {
-  res.json(history.map(h => ({
+  res.json(getHistory(req.sid).map(h => ({
     id: h.id,
     date: h.date,
     caption: h.caption,
