@@ -22,6 +22,9 @@ ${p?.zona ? `- Zona/s de actuación: ${p.zona}` : ''}
 "Precio y condiciones orientativos, sujetos a verificación."${p?.numAgencia ? ` Si el caption promociona una propiedad concreta, puedes mencionar el nº de registro de la agencia (${p.numAgencia}).` : ''}
 `,
 
+  // Estilo visual sugerido cuando se genera la imagen con IA (en vez de subir foto).
+  imageStyle: 'fotografía inmobiliaria profesional de una vivienda o interior moderno, luz natural, composición limpia y realista, sin texto ni logos superpuestos',
+
   tones: [
     { label: '🏡 Estilo de vida', angle: 'vende la experiencia de vivir en esa propiedad, la emoción y el estilo de vida, no solo metros y características técnicas' },
     { label: '🔍 Informativo',    angle: 'destaca datos objetivos de la propiedad y la zona de forma clara y atractiva' },

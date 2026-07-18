@@ -1,6 +1,8 @@
 import React, { useState, useRef } from 'react';
 import './Upload.css';
 
+const WEEK_DAYS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'];
+
 export default function Upload({ onGenerated, onWeekGenerated }) {
   const [files, setFiles] = useState([]); // [{ file, preview, type, frame }]
   const [selected, setSelected] = useState(0);
@@ -8,7 +10,48 @@ export default function Upload({ onGenerated, onWeekGenerated }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [mode, setMode] = useState('single');
+  const [source, setSource] = useState('file'); // 'file' | 'ai'
+  const [aiDescription, setAiDescription] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState('');
   const inputRef = useRef();
+
+  // Convierte el dataURI que devuelve /api/generate-image en un File normal,
+  // para que la imagen generada entre en el mismo flujo que una foto subida.
+  function dataURItoFile(dataURI, filename) {
+    const [header, data] = dataURI.split(',');
+    const mime = header.match(/data:(.*?);/)[1];
+    const binary = atob(data);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new File([bytes], filename, { type: mime });
+  }
+
+  async function generateAIImage() {
+    if (!aiDescription.trim()) { setAiError('Describe qué quieres que aparezca en la imagen'); return; }
+    setAiLoading(true);
+    setAiError('');
+    try {
+      const res = await fetch('/api/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description: aiDescription }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error generando imagen');
+      const file = dataURItoFile(data.image, `ia-${Date.now()}.png`);
+      setFiles(prev => {
+        const next = [...prev, { file, preview: data.image, type: 'image', frame: null }];
+        setSelected(prev.length);
+        return next;
+      });
+      setAiDescription('');
+    } catch (err) {
+      setAiError(err.message);
+    } finally {
+      setAiLoading(false);
+    }
+  }
 
   // Extrae un fotograma de un vídeo como blob
   function extractVideoFrame(file) {
@@ -93,19 +136,26 @@ export default function Upload({ onGenerated, onWeekGenerated }) {
     setLoading(true);
     setError('');
     try {
-      const item = files[selected];
-      const raw = item.type === 'video' ? item.frame : item.file;
-      const compressed = await compressImage(raw);
-      const form = new FormData();
-      form.append('image', compressed);
-      const previewUrl = item.type === 'video' ? URL.createObjectURL(item.frame) : item.preview;
-
       if (mode === 'week') {
+        // Usa hasta 5 fotos de la galería, una por cada día de la semana.
+        // Si solo hay 1, el backend la reutiliza para los 5 días.
+        const imgFiles = await Promise.all(files.slice(0, 5).map(async item => {
+          const raw = item.type === 'video' ? item.frame : item.file;
+          return compressImage(raw);
+        }));
+        const form = new FormData();
+        imgFiles.forEach(f => form.append('images', f));
         const res = await fetch('/api/generate-week', { method: 'POST', body: form });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Error generando semana');
-        onWeekGenerated({ ...data, previewUrl });
+        onWeekGenerated(data);
       } else {
+        const item = files[selected];
+        const raw = item.type === 'video' ? item.frame : item.file;
+        const compressed = await compressImage(raw);
+        const previewUrl = item.type === 'video' ? URL.createObjectURL(item.frame) : item.preview;
+        const form = new FormData();
+        form.append('image', compressed);
         const res = await fetch('/api/generate', { method: 'POST', body: form });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Error generando caption');
@@ -139,40 +189,68 @@ export default function Upload({ onGenerated, onWeekGenerated }) {
 
       {mode === 'week' && (
         <div className="mode-hint">
-          La IA generará 5 captions distintos — uno por día, de lunes a viernes, cada uno con un ángulo diferente.
+          Sube hasta 5 fotos — una por cada día de lunes a viernes, en el orden en que las añadas. Si subes menos de 5, se repiten para completar la semana. Cada caption se genera mirando su propia foto.
         </div>
       )}
 
-      {/* Zona drop */}
-      <div
-        className={`drop-zone ${dragging ? 'dragging' : ''} ${files.length ? 'drop-zone-compact' : ''}`}
-        onDragOver={e => { e.preventDefault(); setDragging(true); }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={onDrop}
-        onClick={() => inputRef.current.click()}
-      >
-        {files.length ? (
-          <>
-            <span className="drop-icon-sm">＋</span>
-            <p className="drop-sub">Arrastra más archivos o haz clic para añadir</p>
-          </>
-        ) : (
-          <>
-            <div className="drop-icon">📂</div>
-            <p className="drop-title">Arrastra imágenes o vídeos aquí</p>
-            <p className="drop-sub">o haz clic para seleccionar</p>
-            <p className="drop-hint">JPG, PNG, WEBP, MP4, MOV · Varios archivos a la vez</p>
-          </>
-        )}
-        <input
-          ref={inputRef}
-          type="file"
-          accept="image/*,video/*"
-          multiple
-          style={{ display: 'none' }}
-          onChange={e => processFiles(e.target.files)}
-        />
+      {/* Toggle fuente de la imagen */}
+      <div className="source-toggle">
+        <button className={`mode-btn ${source === 'file' ? 'active' : ''}`} onClick={() => setSource('file')}>
+          📎 Subir foto
+        </button>
+        <button className={`mode-btn ${source === 'ai' ? 'active' : ''}`} onClick={() => setSource('ai')}>
+          ✨ Generar con IA
+        </button>
       </div>
+
+      {source === 'file' ? (
+        /* Zona drop */
+        <div
+          className={`drop-zone ${dragging ? 'dragging' : ''} ${files.length ? 'drop-zone-compact' : ''}`}
+          onDragOver={e => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={onDrop}
+          onClick={() => inputRef.current.click()}
+        >
+          {files.length ? (
+            <>
+              <span className="drop-icon-sm">＋</span>
+              <p className="drop-sub">Arrastra más archivos o haz clic para añadir</p>
+            </>
+          ) : (
+            <>
+              <div className="drop-icon">📂</div>
+              <p className="drop-title">Arrastra imágenes o vídeos aquí</p>
+              <p className="drop-sub">o haz clic para seleccionar</p>
+              <p className="drop-hint">JPG, PNG, WEBP, MP4, MOV · Varios archivos a la vez</p>
+            </>
+          )}
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/*,video/*"
+            multiple
+            style={{ display: 'none' }}
+            onChange={e => processFiles(e.target.files)}
+          />
+        </div>
+      ) : (
+        /* Panel de generación con IA */
+        <div className="ai-panel card">
+          <p className="ai-panel-label">Describe qué quieres que aparezca en la imagen</p>
+          <textarea
+            className="ai-textarea"
+            placeholder="Ej: asesor atendiendo a un cliente en la oficina, ambiente cálido y de confianza"
+            value={aiDescription}
+            onChange={e => setAiDescription(e.target.value)}
+            rows={3}
+          />
+          <button className="btn btn-primary" onClick={generateAIImage} disabled={aiLoading}>
+            {aiLoading ? <><span className="spinner" /> Generando imagen...</> : '✨ Generar imagen'}
+          </button>
+          {aiError && <div className="upload-error">⚠️ {aiError}</div>}
+        </div>
+      )}
 
       {/* Galería + preview */}
       {files.length > 0 && (
@@ -210,6 +288,7 @@ export default function Upload({ onGenerated, onWeekGenerated }) {
                     className="thumb-img"
                   />
                   {item.type === 'video' && <span className="thumb-video-icon">▶</span>}
+                  {mode === 'week' && i < 5 && <span className="thumb-day-badge">{WEEK_DAYS[i]}</span>}
                   <button
                     className="thumb-remove"
                     onClick={e => { e.stopPropagation(); removeFile(i); }}
@@ -217,6 +296,10 @@ export default function Upload({ onGenerated, onWeekGenerated }) {
                 </div>
               ))}
             </div>
+
+            {mode === 'week' && files.length > 5 && (
+              <p className="week-extra-note">Solo se usarán las primeras 5 fotos (una por día).</p>
+            )}
 
             {/* Info + botón */}
             <div className="media-info card">

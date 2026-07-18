@@ -3,3 +3,5 @@ dist/
 .env
 server/profile.json
 server/voice.json
+server/tmp-uploads/
+server/trial-requests.json

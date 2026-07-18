@@ -2,9 +2,11 @@ import React, { useState, useRef } from 'react';
 import './WeekView.css';
 
 export default function WeekView({ data, onBack }) {
-  const { week, previewUrl } = data;
+  const { week } = data;
+  const originalCaptions = useRef(week.map(d => d.caption));
   const [captions, setCaptions] = useState(week.map(d => d.caption));
   const [dayImages, setDayImages] = useState(week.map(() => null)); // null = usa imagen base
+  const [regenerating, setRegenerating] = useState(week.map(() => false));
   const [copied, setCopied] = useState(null);
   const fileRefs = useRef(week.map(() => null));
 
@@ -18,17 +20,35 @@ export default function WeekView({ data, onBack }) {
     setCaptions(c => c.map((cap, idx) => idx === i ? val : cap));
   }
 
-  function handleImageChange(i, file) {
+  function setDayRegenerating(i, val) {
+    setRegenerating(r => r.map((v, idx) => idx === i ? val : v));
+  }
+
+  // Vuelve a pedirle a la IA el caption de este día usando la nueva imagen,
+  // para que el texto hable realmente de la foto que se ve ese día.
+  async function regenerateCaption(i, file) {
+    setDayRegenerating(i, true);
+    try {
+      const form = new FormData();
+      form.append('image', file);
+      form.append('day', week[i].day);
+      const res = await fetch('/api/generate-day', { method: 'POST', body: form });
+      const data = await res.json();
+      if (res.ok && data.caption) update(i, data.caption);
+    } catch {
+      // si falla la regeneración, se deja el caption que hubiera antes
+    } finally {
+      setDayRegenerating(i, false);
+    }
+  }
+
+  async function handleImageChange(i, file) {
     if (!file) return;
     const isVideo = file.type.startsWith('video/');
-    if (isVideo) {
-      extractFrame(file).then(frameUrl => {
-        setDayImages(imgs => imgs.map((img, idx) => idx === i ? frameUrl : img));
-      });
-    } else {
-      const url = URL.createObjectURL(file);
-      setDayImages(imgs => imgs.map((img, idx) => idx === i ? url : img));
-    }
+    const imageFile = isVideo ? await extractFrame(file) : file;
+    const url = URL.createObjectURL(imageFile);
+    setDayImages(imgs => imgs.map((img, idx) => idx === i ? url : img));
+    regenerateCaption(i, imageFile);
   }
 
   function extractFrame(file) {
@@ -44,7 +64,7 @@ export default function WeekView({ data, onBack }) {
         canvas.height = video.videoHeight;
         canvas.getContext('2d').drawImage(video, 0, 0);
         URL.revokeObjectURL(url);
-        resolve(canvas.toDataURL('image/jpeg', 0.9));
+        canvas.toBlob(blob => resolve(new File([blob], 'frame.jpg', { type: 'image/jpeg' })), 'image/jpeg', 0.9);
       };
       video.load();
     });
@@ -52,9 +72,11 @@ export default function WeekView({ data, onBack }) {
 
   function removeImage(i) {
     setDayImages(imgs => imgs.map((img, idx) => idx === i ? null : img));
+    update(i, originalCaptions.current[i]);
   }
 
-  const allSameImage = dayImages.every(img => img === null);
+  const hasOverrides = dayImages.some(img => img !== null);
+  const allSameBase = week.every(d => d.image === week[0]?.image);
 
   return (
     <div className="week-page">
@@ -62,13 +84,19 @@ export default function WeekView({ data, onBack }) {
         <button className="btn btn-ghost" onClick={onBack}>← Volver</button>
         <div>
           <h1>Semana de contenido</h1>
-          <p>{allSameImage ? 'Usando la misma imagen toda la semana — puedes cambiarla por día' : 'Imágenes personalizadas por día'}</p>
+          <p>
+            {hasOverrides
+              ? 'Imágenes personalizadas por día'
+              : allSameBase
+                ? 'Usando la misma imagen toda la semana — puedes cambiarla por día'
+                : 'Cada día tiene su propia imagen — puedes cambiarla si quieres'}
+          </p>
         </div>
       </div>
 
       <div className="week-days-full">
         {week.map((day, i) => {
-          const img = dayImages[i] ?? previewUrl;
+          const img = dayImages[i] ?? day.image;
           const isCustom = dayImages[i] !== null;
           return (
             <div key={i} className="day-card card">
@@ -115,16 +143,23 @@ export default function WeekView({ data, onBack }) {
                     <button
                       className={`btn btn-ghost copy-btn ${copied === i ? 'copied' : ''}`}
                       onClick={() => copy(i)}
+                      disabled={regenerating[i]}
                     >
                       {copied === i ? '✅ Copiado' : '📋 Copiar'}
                     </button>
                   </div>
-                  <textarea
-                    className="day-caption"
-                    value={captions[i]}
-                    onChange={e => update(i, e.target.value)}
-                    rows={4}
-                  />
+                  {regenerating[i] ? (
+                    <div className="day-caption-loading">
+                      <span className="spinner" /> Regenerando caption con la nueva imagen…
+                    </div>
+                  ) : (
+                    <textarea
+                      className="day-caption"
+                      value={captions[i]}
+                      onChange={e => update(i, e.target.value)}
+                      rows={4}
+                    />
+                  )}
                   <div className="day-chars">{captions[i].length}/2200</div>
                 </div>
 

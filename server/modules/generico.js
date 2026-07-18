@@ -14,6 +14,9 @@ export default {
   // Aviso/disclaimer que el modelo debe añadir al caption. Vacío = no aplica.
   compliance: () => '',
 
+  // Estilo visual sugerido cuando se genera la imagen con IA (en vez de subir foto).
+  imageStyle: 'fotografía profesional de un negocio local, luz natural, composición limpia y realista, sin texto ni logos superpuestos',
+
   // Los 3 enfoques para el modo "caption único" (deben ser exactamente 3).
   tones: [
     { label: '✨ Inspiracional', angle: 'emocional/inspiracional — conecta con los valores o el sentimiento que transmite la imagen' },

@@ -46,6 +46,44 @@
   line-height: 1.5;
 }
 
+/* ── Toggle fuente (subir vs IA) ── */
+.source-toggle {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px;
+  width: fit-content;
+}
+
+/* ── Panel de generación con IA ── */
+.ai-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+  padding: 20px;
+}
+
+.ai-panel-label { font-size: 13px; font-weight: 500; color: var(--text); }
+
+.ai-textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg2);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+.ai-textarea:focus { outline: none; border-color: var(--accent); }
+
 /* ── Drop zone ── */
 .drop-zone {
   border: 1.5px dashed var(--border);
@@ -174,6 +212,27 @@
 }
 
 .thumb:hover .thumb-remove { opacity: 1; }
+
+.thumb-day-badge {
+  position: absolute;
+  bottom: 3px;
+  left: 3px;
+  background: rgba(0,0,0,0.75);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+  padding: 2px 5px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  pointer-events: none;
+}
+
+.week-extra-note {
+  font-size: 12px;
+  color: var(--text2);
+  margin: -4px 0 8px;
+}
 
 /* ── Sidebar info ── */
 .media-sidebar { display: flex; flex-direction: column; gap: 12px; }

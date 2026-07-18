@@ -21,6 +21,9 @@ ${p?.tiposPoliza ? `- Pólizas que ofrece esta correduría: ${p.tiposPoliza}` : 
 "Información orientativa, sujeta a condiciones particulares de la póliza."${p?.numColegiado ? ` Si el caption promociona un producto concreto (no en contenido educativo ni de comunidad), puedes mencionar que es mediador de seguros colegiado (${p.numColegiado}).` : ''}
 `,
 
+  // Estilo visual sugerido cuando se genera la imagen con IA (en vez de subir foto).
+  imageStyle: 'fotografía profesional de una oficina de seguros o un asesor atendiendo a un cliente, ambiente cálido y de confianza, realista, sin texto ni logos superpuestos',
+
   tones: [
     { label: '🛡️ Confianza',  angle: 'transmite seguridad y tranquilidad — conecta con la preocupación real que resuelve el seguro (proteger a la familia, el hogar, el coche)' },
     { label: '📘 Educativo',  angle: 'explica de forma sencilla qué cubre o por qué importa, sin tecnicismos, como si se lo explicaras a un amigo' },

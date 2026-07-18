@@ -3,6 +3,10 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#1a1a2e" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="icon" type="image/svg+xml" href="/icon.svg" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <title>AutoPost CM — Instagram en piloto automático</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -575,7 +579,7 @@
     <div class="nav-logo-mark">✦</div>
     AutoPost <span>CM</span>
   </div>
-  <a href="/index.html" class="nav-cta">Probar gratis →</a>
+  <a href="/index.html" class="nav-cta js-install-cta">Probar gratis →</a>
 </nav>
 
 <!-- HERO -->
@@ -599,7 +603,7 @@
   </p>
 
   <div class="hero-actions">
-    <a href="/index.html" class="btn-hero">✦ Empezar gratis ahora</a>
+    <a href="/index.html" class="btn-hero js-install-cta">✦ Empezar gratis ahora</a>
     <a href="#como-funciona" class="btn-secondary">Ver cómo funciona</a>
   </div>
 
@@ -782,7 +786,7 @@
   <div class="cta-glow"></div>
   <h2>Tu Instagram merece<br><span class="gradient-text">contenido de verdad</span></h2>
   <p>Empieza gratis hoy. Sin tarjeta de crédito. Sin complicaciones.</p>
-  <a href="/index.html" class="btn-hero" style="font-size:17px; padding:16px 40px">
+  <a href="/index.html" class="btn-hero js-install-cta" style="font-size:17px; padding:16px 40px">
     ✦ Probar AutoPost CM gratis
   </a>
   <div class="cta-note">✓ Configuración en 2 minutos &nbsp;·&nbsp; ✓ Sin cuenta necesaria &nbsp;·&nbsp; ✓ Funciona para cualquier sector</div>
@@ -1015,6 +1019,37 @@
   });
 
   loadReviews();
+
+  // ── Instalar como app (PWA) ──
+  // Registramos el mismo service worker que usa la app para que el navegador
+  // considere esta página "instalable" y dispare beforeinstallprompt.
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
+
+  let deferredInstallPrompt = null;
+  const installCtas = document.querySelectorAll('.js-install-cta');
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    installCtas.forEach(btn => { btn.textContent = '⬇ Instalar app'; });
+  });
+
+  installCtas.forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      if (!deferredInstallPrompt) return; // sin prompt disponible: el enlace normal a /index.html funciona igual
+      e.preventDefault();
+      deferredInstallPrompt.prompt();
+      const { outcome } = await deferredInstallPrompt.userChoice;
+      deferredInstallPrompt = null;
+      if (outcome !== 'accepted') window.location.href = '/index.html';
+    });
+  });
+
+  window.addEventListener('appinstalled', () => {
+    deferredInstallPrompt = null;
+  });
 </script>
 
 </body>
