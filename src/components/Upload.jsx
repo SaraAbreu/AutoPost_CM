@@ -14,6 +14,10 @@ export default function Upload({ onGenerated, onWeekGenerated }) {
   const [aiDescription, setAiDescription] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState('');
+  // Se activa cuando el backend devuelve limitReached (límite diario de la
+  // demo pública, ver DEMO_DAILY_LIMIT en server/index.js). En despliegues sin
+  // ese límite configurado (uso normal / cliente real) esto nunca se activa.
+  const [limitReached, setLimitReached] = useState(false);
   const inputRef = useRef();
 
   // Convierte el dataURI que devuelve /api/generate-image en un File normal,
@@ -31,6 +35,7 @@ export default function Upload({ onGenerated, onWeekGenerated }) {
     if (!aiDescription.trim()) { setAiError('Describe qué quieres que aparezca en la imagen'); return; }
     setAiLoading(true);
     setAiError('');
+    setLimitReached(false);
     try {
       const res = await fetch('/api/generate-image', {
         method: 'POST',
@@ -38,7 +43,10 @@ export default function Upload({ onGenerated, onWeekGenerated }) {
         body: JSON.stringify({ description: aiDescription }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Error generando imagen');
+      if (!res.ok) {
+        if (data.limitReached) setLimitReached(true);
+        throw new Error(data.error || 'Error generando imagen');
+      }
       const file = dataURItoFile(data.image, `ia-${Date.now()}.png`);
       setFiles(prev => {
         const next = [...prev, { file, preview: data.image, type: 'image', frame: null }];
@@ -135,6 +143,7 @@ export default function Upload({ onGenerated, onWeekGenerated }) {
     if (!files.length) return;
     setLoading(true);
     setError('');
+    setLimitReached(false);
     try {
       if (mode === 'week') {
         // Usa hasta 5 fotos de la galería, una por cada día de la semana.
@@ -147,7 +156,10 @@ export default function Upload({ onGenerated, onWeekGenerated }) {
         imgFiles.forEach(f => form.append('images', f));
         const res = await fetch('/api/generate-week', { method: 'POST', body: form });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Error generando semana');
+        if (!res.ok) {
+          if (data.limitReached) setLimitReached(true);
+          throw new Error(data.error || 'Error generando semana');
+        }
         onWeekGenerated(data);
       } else {
         const item = files[selected];
@@ -158,7 +170,10 @@ export default function Upload({ onGenerated, onWeekGenerated }) {
         form.append('image', compressed);
         const res = await fetch('/api/generate', { method: 'POST', body: form });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Error generando caption');
+        if (!res.ok) {
+          if (data.limitReached) setLimitReached(true);
+          throw new Error(data.error || 'Error generando caption');
+        }
         onGenerated({ ...data, caption: data.captions?.[0] ?? data.caption, image: previewUrl });
       }
     } catch (err) {
@@ -248,7 +263,8 @@ export default function Upload({ onGenerated, onWeekGenerated }) {
           <button className="btn btn-primary" onClick={generateAIImage} disabled={aiLoading}>
             {aiLoading ? <><span className="spinner" /> Generando imagen...</> : '✨ Generar imagen'}
           </button>
-          {aiError && <div className="upload-error">⚠️ {aiError}</div>}
+          {aiError && !limitReached && <div className="upload-error">⚠️ {aiError}</div>}
+          {limitReached && <LimitReachedCard message={aiError} />}
         </div>
       )}
 
@@ -321,7 +337,22 @@ export default function Upload({ onGenerated, onWeekGenerated }) {
         </div>
       )}
 
-      {error && <div className="upload-error">⚠️ {error}</div>}
+      {error && !limitReached && <div className="upload-error">⚠️ {error}</div>}
+      {limitReached && <LimitReachedCard message={error} />}
+    </div>
+  );
+}
+
+// Tarjeta de "límite gratis agotado" — solo aparece si el backend responde
+// limitReached (demo pública con DEMO_DAILY_LIMIT configurado). Reutiliza el
+// mismo formulario de solicitud de prueba que ya existe en matriz.html en vez
+// de duplicar un modal aquí.
+function LimitReachedCard({ message }) {
+  return (
+    <div className="upload-limit-card">
+      <span className="upload-limit-icon">🚀</span>
+      <p className="upload-limit-text">{message || 'Has agotado tus generaciones gratis de hoy.'}</p>
+      <a href="/matriz.html" className="btn btn-primary">Pedir prueba completa →</a>
     </div>
   );
 }

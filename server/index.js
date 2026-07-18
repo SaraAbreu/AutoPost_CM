@@ -127,6 +127,33 @@ Responde SOLO con el caption final, sin explicaciones, sin comillas ni texto adi
 const app = express();
 const PORT = process.env.PORT || 3001;
 const IS_PROD = process.env.NODE_ENV === 'production';
+app.set('trust proxy', true); // necesario para leer la IP real detrás de Railway/Hostinger/etc.
+
+// ─── Límite diario de la demo pública (opcional) ─────────────────────────────
+// Si defines DEMO_DAILY_LIMIT (ej. "3"), cada IP solo puede generar ese número
+// de captions/imágenes al día — pensado SOLO para el despliegue de demo pública
+// abierta (sin login), para no dejar la cuota gratuita de Groq/Pollinations a
+// merced de cualquiera. NO definir esta variable en un despliegue de cliente
+// real (Objetiva Broker, etc.) — ahí el uso debe ser ilimitado.
+const DEMO_DAILY_LIMIT = parseInt(process.env.DEMO_DAILY_LIMIT, 10) || 0;
+const demoUsage = new Map(); // "ip|YYYY-MM-DD" -> nº de usos ese día
+
+function demoLimitGuard(req, res, next) {
+  if (!DEMO_DAILY_LIMIT) return next(); // sin límite configurado, comportamiento normal
+  const ip = (req.headers['x-forwarded-for']?.split(',')[0].trim()) || req.socket.remoteAddress || 'unknown';
+  const today = new Date().toISOString().slice(0, 10);
+  const key = `${ip}|${today}`;
+  const used = demoUsage.get(key) || 0;
+  if (used >= DEMO_DAILY_LIMIT) {
+    return res.status(429).json({
+      error: `Has usado tus ${DEMO_DAILY_LIMIT} generaciones gratis de hoy. Pide tu prueba completa para seguir sin límite.`,
+      limitReached: true,
+      limit: DEMO_DAILY_LIMIT
+    });
+  }
+  demoUsage.set(key, used + 1);
+  next();
+}
 
 // Historial en memoria (en produccion se podria usar SQLite)
 const history = [];
@@ -160,7 +187,7 @@ if (process.env.APP_PASSWORD) {
 }
 
 // ─── API: Generar caption con Groq Vision ────────────────────────────────────
-app.post('/api/generate', upload.single('image'), async (req, res) => {
+app.post('/api/generate', demoLimitGuard, upload.single('image'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No se recibio imagen' });
 
@@ -247,7 +274,7 @@ NO pongas placeholders como [nombre], [empresa] ni texto fuera de los separadore
 // Acepta hasta 5 imágenes en el campo "images". Si solo llega 1, se usa la
 // misma foto para los 5 días (una única llamada a Groq, más rápido). Si llegan
 // varias, cada día usa su propia foto (una llamada a Groq por día, en paralelo).
-app.post('/api/generate-week', upload.array('images', 5), async (req, res) => {
+app.post('/api/generate-week', demoLimitGuard, upload.array('images', 5), async (req, res) => {
   try {
     if (!req.files || !req.files.length) return res.status(400).json({ error: 'No se recibio imagen' });
 
@@ -325,7 +352,7 @@ NO pongas placeholders. NO incluyas texto fuera de los separadores. Máximo 1500
 });
 
 // ─── API: Regenerar el caption de un día concreto (semana) con otra imagen ──
-app.post('/api/generate-day', upload.single('image'), async (req, res) => {
+app.post('/api/generate-day', demoLimitGuard, upload.single('image'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No se recibio imagen' });
     const { day } = req.body;
@@ -353,7 +380,7 @@ app.post('/api/generate-day', upload.single('image'), async (req, res) => {
 // estilo visual del módulo activo y el contexto de marca del perfil. Devuelve
 // una imagen lista para usarse exactamente igual que una foto subida (el
 // frontend la reinyecta en el mismo flujo de /api/generate o /api/generate-week).
-app.post('/api/generate-image', async (req, res) => {
+app.post('/api/generate-image', demoLimitGuard, async (req, res) => {
   try {
     const { description } = req.body;
     if (!description || !description.trim()) {
