@@ -43,6 +43,7 @@ Abre http://localhost:5173 en el navegador.
 | ADMIN_KEY | Protege `GET /api/trial-requests` (los leads que piden prueba gratis desde matriz.html). Sin esto esa ruta queda abierta a quien tenga la URL. Consulta con `/api/trial-requests?key=TU_ADMIN_KEY` |
 | DEMO_DAILY_LIMIT | SOLO para el despliegue de demo pública. Nº de generaciones gratis por IP y día (ej. `3`). Al agotarse, la app muestra un aviso con enlace a `/matriz.html` para pedir la prueba completa. No definir en un despliegue de cliente real — ahí debe ser ilimitado |
 | POLLINATIONS_TOKEN | Token de Pollinations.AI (auth.pollinations.ai), opcional — "Generar imagen con IA" funciona sin esto (gratis, con marca de agua pequeña). Solo hace falta si quieres quitarla o subir el límite de peticiones |
+| UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN | Recomendable en cualquier despliegue fuera de tu ordenador (Railway, Hostinger...). Sin esto, el perfil de marca, la voz aprendida, las reseñas y los leads se guardan en archivos locales que la mayoría de hostings borran en cada redeploy. Con esto definido, viven en Redis (upstash.com, plan Free gratuito) y sobreviven a los redeploys pase lo que pase con el disco del hosting. Sin esto, sigue funcionando igual en local |
 
 Sin META_ACCESS_TOKEN, la app funciona en modo demo: genera captions pero no publica en Instagram. Si defines META_ACCESS_TOKEN, define también PUBLIC_URL o la publicación real fallará.
 

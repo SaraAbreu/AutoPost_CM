@@ -7,8 +7,18 @@ import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import 'dotenv/config';
+import { Redis } from '@upstash/redis';
 import { getModule, listModules } from './modules/index.js';
 import { generateImage } from './services/imageGen.js';
+
+// Persistencia: si hay credenciales de Upstash, los datos "de verdad" (perfil,
+// voz aprendida, reseñas, leads) viven en Redis y sobreviven a cualquier
+// redeploy/reinicio, sea cual sea el hosting. Sin credenciales (ej. desarrollo
+// local sin cuenta creada), cada función cae automáticamente en el archivo
+// local de siempre — no hace falta Redis para seguir trabajando en local.
+const redis = (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN)
+  ? new Redis({ url: process.env.UPSTASH_REDIS_REST_URL, token: process.env.UPSTASH_REDIS_REST_TOKEN })
+  : null;
 
 const __file = path.dirname(fileURLToPath(import.meta.url));
 const PROFILE_PATH = path.join(__file, 'profile.json');
@@ -86,8 +96,10 @@ function demoLimitGuard(req, res, next) {
 }
 
 // sid presente (demo pública) -> perfil/voz/historial propios de esa sesión,
-// en memoria. sid null (cliente real) -> el fichero compartido de siempre.
-function loadProfile(sid) {
+// en memoria (aceptable perderlos al reiniciar, es solo una demo). sid null
+// (cliente real) -> dato persistente compartido: Redis si hay credenciales,
+// si no el fichero local de siempre (fallback para desarrollo).
+async function loadProfile(sid) {
   if (sid) {
     if (!sessionProfiles.has(sid)) {
       let base = {};
@@ -96,6 +108,12 @@ function loadProfile(sid) {
     }
     return sessionProfiles.get(sid);
   }
+  if (redis) {
+    try {
+      const data = await redis.get('profile');
+      if (data) return data;
+    } catch (err) { console.error('Redis error (loadProfile), usando fallback local:', err.message); }
+  }
   try { return JSON.parse(fs.readFileSync(PROFILE_PATH, 'utf8')); }
   catch {
     try { return JSON.parse(fs.readFileSync(DEFAULT_PROFILE_PATH, 'utf8')); }
@@ -103,22 +121,36 @@ function loadProfile(sid) {
   }
 }
 
-function saveProfile(sid, data) {
+async function saveProfile(sid, data) {
   if (sid) { sessionProfiles.set(sid, data); return; }
+  if (redis) {
+    try { await redis.set('profile', data); return; }
+    catch (err) { console.error('Redis error (saveProfile), usando fallback local:', err.message); }
+  }
   fs.writeFileSync(PROFILE_PATH, JSON.stringify(data, null, 2), 'utf8');
 }
 
-function loadVoice(sid) {
+async function loadVoice(sid) {
   if (sid) {
     if (!sessionVoices.has(sid)) sessionVoices.set(sid, { examples: [], patterns: null });
     return sessionVoices.get(sid);
+  }
+  if (redis) {
+    try {
+      const data = await redis.get('voice');
+      if (data) return data;
+    } catch (err) { console.error('Redis error (loadVoice), usando fallback local:', err.message); }
   }
   try { return JSON.parse(fs.readFileSync(VOICE_PATH, 'utf8')); }
   catch { return { examples: [], patterns: null }; }
 }
 
-function saveVoice(sid, data) {
+async function saveVoice(sid, data) {
   if (sid) { sessionVoices.set(sid, data); return; }
+  if (redis) {
+    try { await redis.set('voice', data); return; }
+    catch (err) { console.error('Redis error (saveVoice), usando fallback local:', err.message); }
+  }
   fs.writeFileSync(VOICE_PATH, JSON.stringify(data, null, 2), 'utf8');
 }
 
@@ -130,27 +162,50 @@ function getHistory(sid) {
   return history;
 }
 
+const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
+
+// La cuenta de Groq tiene un límite de tokens-por-minuto (TPM) para
+// qwen/qwen3.6-27b. "Semana completa" con varias fotos distintas puede
+// agotarlo si se piden varias imágenes casi a la vez (cada imagen consume
+// bastantes tokens de visión). Este helper reintenta automáticamente cuando
+// Groq responde 429 rate_limit_exceeded, esperando el tiempo que el propio
+// error de Groq sugiere (viene en su mensaje, ej. "Please try again in 14.96s").
+async function callGroq(payload, retries = 2) {
+  try {
+    return await axios.post(GROQ_URL, payload, {
+      headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}`, 'Content-Type': 'application/json' }
+    });
+  } catch (err) {
+    const groqError = err.response?.data?.error;
+    if (retries > 0 && groqError?.code === 'rate_limit_exceeded') {
+      const match = groqError.message?.match(/try again in ([\d.]+)s/);
+      const waitMs = match ? Math.ceil(parseFloat(match[1]) * 1000) + 500 : 5000;
+      console.warn(`Rate limit de Groq alcanzado, reintentando en ${(waitMs / 1000).toFixed(1)}s... (quedan ${retries} intentos)`);
+      await new Promise(r => setTimeout(r, waitMs));
+      return callGroq(payload, retries - 1);
+    }
+    throw err;
+  }
+}
+
 async function analyzeVoice(examples) {
   const pairs = examples.map((e, i) =>
     `--- Par ${i + 1} ---\nOriginal IA:\n${e.original}\n\nEditado por el usuario:\n${e.final}`
   ).join('\n\n');
 
-  const response = await axios.post(
-    'https://api.groq.com/openai/v1/chat/completions',
-    {
-      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-      messages: [{
-        role: 'user',
-        content: `Analiza estos ${examples.length} pares de captions de Instagram (versión IA vs versión editada por el usuario) e identifica los patrones de estilo y preferencias del usuario.
+  const response = await callGroq({
+    model: 'qwen/qwen3.6-27b',
+    reasoning_effort: 'none',
+    messages: [{
+      role: 'user',
+      content: `Analiza estos ${examples.length} pares de captions de Instagram (versión IA vs versión editada por el usuario) e identifica los patrones de estilo y preferencias del usuario.
 
 ${pairs}
 
 Responde SOLO con una lista numerada de 4-5 patrones concisos y específicos en español. Ejemplos de buenas respuestas: "Prefiere frases de máximo 10 palabras", "Siempre incluye el número de teléfono en el CTA", "Evita los signos de exclamación", "Usa tuteo informal". Sin introducción ni conclusión.`
-      }],
-      max_tokens: 300
-    },
-    { headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}`, 'Content-Type': 'application/json' } }
-  );
+    }],
+    max_tokens: 300
+  });
 
   return response.data.choices[0].message.content.trim();
 }
@@ -169,8 +224,8 @@ function profileContext(p) {
   return `CONTEXTO DE MARCA (úsalo siempre, no pongas placeholders):\n${lines.join('\n')}\n\n`;
 }
 
-function voiceContext(sid) {
-  const { patterns } = loadVoice(sid);
+async function voiceContext(sid) {
+  const { patterns } = await loadVoice(sid);
   if (!patterns) return '';
   return `ESTILO APRENDIDO DEL USUARIO (respétalos estrictamente):\n${patterns}\n\n`;
 }
@@ -180,9 +235,11 @@ function voiceContext(sid) {
 async function generateCaptionForAngle(base64, mimeType, profile, module, angleDef, sid) {
   const moduleExtra = module.promptExtra ? module.promptExtra(profile) : '';
   const complianceExtra = module.compliance ? module.compliance(profile) : '';
+  const voiceCtx = await voiceContext(sid);
 
   const payload = {
-    model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+    model: 'qwen/qwen3.6-27b',
+    reasoning_effort: 'none',
     messages: [{
       role: 'user',
       content: [
@@ -191,7 +248,7 @@ async function generateCaptionForAngle(base64, mimeType, profile, module, angleD
           type: 'text',
           text: `Eres un experto community manager de Instagram especializado en negocios hispanohablantes de cualquier sector.
 
-${profileContext(profile)}${moduleExtra}${voiceContext(sid)}Analiza esta imagen y genera UN ÚNICO caption para Instagram con este ángulo: ${angleDef.angle}
+${profileContext(profile)}${moduleExtra}${voiceCtx}Analiza esta imagen y genera UN ÚNICO caption para Instagram con este ángulo: ${angleDef.angle}
 
 Debe tener: primera línea con gancho que pare el scroll, 2-3 frases naturales que conecten la imagen con el negocio, llamada a la acción específica para el sector, y 5 hashtags relevantes.
 ${complianceExtra}
@@ -202,11 +259,7 @@ Responde SOLO con el caption final, sin explicaciones, sin comillas ni texto adi
     max_tokens: 600
   };
 
-  const response = await axios.post(
-    'https://api.groq.com/openai/v1/chat/completions',
-    payload,
-    { headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}`, 'Content-Type': 'application/json' } }
-  );
+  const response = await callGroq(payload);
 
   return response.data.choices[0].message.content.replace(/\\#/g, '#').trim();
 }
@@ -258,15 +311,17 @@ app.post('/api/generate', demoLimitGuard, upload.single('image'), async (req, re
     const base64 = req.file.buffer.toString('base64');
     const mimeType = req.file.mimetype;
 
-    const profile = loadProfile(req.sid);
+    const profile = await loadProfile(req.sid);
     const module = getModule(profile.modulo);
     const moduleExtra = module.promptExtra ? module.promptExtra(profile) : '';
     const complianceExtra = module.compliance ? module.compliance(profile) : '';
+    const voiceCtx = await voiceContext(req.sid);
     const tones = (module.tones && module.tones.length === 3) ? module.tones : getModule('generico').tones;
     const toneLines = tones.map((t, i) => `- Opción ${i + 1}: ${t.angle}`).join('\n');
 
     const payload = {
-      model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+      model: 'qwen/qwen3.6-27b',
+      reasoning_effort: 'none',
       messages: [{
         role: 'user',
         content: [
@@ -278,7 +333,7 @@ app.post('/api/generate', demoLimitGuard, upload.single('image'), async (req, re
             type: 'text',
             text: `Eres un experto community manager de Instagram especializado en negocios hispanohablantes de cualquier sector.
 
-${profileContext(profile)}${moduleExtra}${voiceContext(req.sid)}Analiza la imagen y genera EXACTAMENTE 3 captions distintos listos para publicar en Instagram, en español. Adapta el lenguaje, tono y referencias al sector de la marca. Cada opción debe tener un enfoque diferente:
+${profileContext(profile)}${moduleExtra}${voiceCtx}Analiza la imagen y genera EXACTAMENTE 3 captions distintos listos para publicar en Instagram, en español. Adapta el lenguaje, tono y referencias al sector de la marca. Cada opción debe tener un enfoque diferente:
 ${toneLines}
 
 Formato OBLIGATORIO — respeta los separadores exactos:
@@ -303,11 +358,7 @@ NO pongas placeholders como [nombre], [empresa] ni texto fuera de los separadore
       max_tokens: 1024
     };
 
-    const response = await axios.post(
-      'https://api.groq.com/openai/v1/chat/completions',
-      payload,
-      { headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}`, 'Content-Type': 'application/json' } }
-    );
+    const response = await callGroq(payload);
 
     const raw = response.data.choices[0].message.content.replace(/\\#/g, '#');
 
@@ -342,7 +393,7 @@ app.post('/api/generate-week', demoLimitGuard, upload.array('images', 5), async 
   try {
     if (!req.files || !req.files.length) return res.status(400).json({ error: 'No se recibio imagen' });
 
-    const profile = loadProfile(req.sid);
+    const profile = await loadProfile(req.sid);
     const module = getModule(profile.modulo);
     const angles = (module.calendarAngles && module.calendarAngles.length === 5)
       ? module.calendarAngles
@@ -354,10 +405,12 @@ app.post('/api/generate-week', demoLimitGuard, upload.array('images', 5), async 
       const mimeType = file.mimetype;
       const moduleExtra = module.promptExtra ? module.promptExtra(profile) : '';
       const complianceExtra = module.compliance ? module.compliance(profile) : '';
+      const voiceCtx = await voiceContext(req.sid);
       const angleBlocks = angles.map(a => `===${a.day}===\n[ángulo ${a.angle}]`).join('\n');
 
       const payload = {
-        model: 'meta-llama/llama-4-scout-17b-16e-instruct',
+        model: 'qwen/qwen3.6-27b',
+        reasoning_effort: 'none',
         messages: [{
           role: 'user',
           content: [
@@ -366,7 +419,7 @@ app.post('/api/generate-week', demoLimitGuard, upload.array('images', 5), async 
               type: 'text',
               text: `Eres un experto community manager de Instagram especializado en negocios hispanohablantes de cualquier sector.
 
-${profileContext(profile)}${moduleExtra}${voiceContext(req.sid)}Analiza la imagen y genera EXACTAMENTE 5 captions para publicar de lunes a viernes. Adapta cada ángulo al sector y tipo de negocio de la marca — los ángulos son universales pero el contenido debe sonar auténtico para ese sector concreto.
+${profileContext(profile)}${moduleExtra}${voiceCtx}Analiza la imagen y genera EXACTAMENTE 5 captions para publicar de lunes a viernes. Adapta cada ángulo al sector y tipo de negocio de la marca — los ángulos son universales pero el contenido debe sonar auténtico para ese sector concreto.
 
 Formato OBLIGATORIO — respeta los separadores exactos:
 
@@ -381,11 +434,7 @@ NO pongas placeholders. NO incluyas texto fuera de los separadores. Máximo 1500
         max_tokens: 2500
       };
 
-      const response = await axios.post(
-        'https://api.groq.com/openai/v1/chat/completions',
-        payload,
-        { headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}`, 'Content-Type': 'application/json' } }
-      );
+      const response = await callGroq(payload);
 
       const raw = response.data.choices[0].message.content.replace(/\\#/g, '#');
       const dataUri = `data:${mimeType};base64,${base64}`;
@@ -400,13 +449,18 @@ NO pongas placeholders. NO incluyas texto fuera de los separadores. Máximo 1500
     }
 
     // Varias fotos: una por día. Si hay menos de 5, se reparten en orden y se repiten.
-    const week = await Promise.all(angles.map(async (a, i) => {
+    // Secuencial (no Promise.all): pedir las 5 imágenes a la vez satura el
+    // límite de tokens-por-minuto de Groq en la cuenta actual. Una a una, con
+    // el reintento automático de callGroq(), es más lento pero fiable.
+    const week = [];
+    for (let i = 0; i < angles.length; i++) {
+      const a = angles[i];
       const file = req.files[i % req.files.length];
       const base64 = file.buffer.toString('base64');
       const mimeType = file.mimetype;
       const caption = await generateCaptionForAngle(base64, mimeType, profile, module, a, req.sid);
-      return { day: a.day, angle: a.label, caption, image: `data:${mimeType};base64,${base64}` };
-    }));
+      week.push({ day: a.day, angle: a.label, caption, image: `data:${mimeType};base64,${base64}` });
+    }
 
     res.json({ week });
   } catch (err) {
@@ -424,7 +478,7 @@ app.post('/api/generate-day', demoLimitGuard, upload.single('image'), async (req
     const base64 = req.file.buffer.toString('base64');
     const mimeType = req.file.mimetype;
 
-    const profile = loadProfile(req.sid);
+    const profile = await loadProfile(req.sid);
     const module = getModule(profile.modulo);
     const angles = (module.calendarAngles && module.calendarAngles.length === 5)
       ? module.calendarAngles
@@ -451,7 +505,7 @@ app.post('/api/generate-image', demoLimitGuard, async (req, res) => {
       return res.status(400).json({ error: 'Falta describir qué imagen generar' });
     }
 
-    const profile = loadProfile(req.sid);
+    const profile = await loadProfile(req.sid);
     const module = getModule(profile.modulo);
     const imageStyle = module.imageStyle || getModule('generico').imageStyle;
 
@@ -491,18 +545,18 @@ app.post('/api/publish', async (req, res) => {
   // Guardar par para aprendizaje de voz (solo si el usuario editó)
   let voiceExamples = 0;
   if (originalCaption && caption && originalCaption.trim() !== caption.trim()) {
-    const voice = loadVoice(req.sid);
+    const voice = await loadVoice(req.sid);
     voice.examples.push({ original: originalCaption.trim(), final: caption.trim(), date: new Date().toISOString() });
-    saveVoice(req.sid, voice);
+    await saveVoice(req.sid, voice);
     voiceExamples = voice.examples.length;
 
     // Analizar patrones a partir de 3 ejemplos (en background, sin bloquear respuesta)
     if (voiceExamples >= 3) {
-      analyzeVoice(voice.examples).then(patterns => {
-        const v = loadVoice(req.sid);
+      analyzeVoice(voice.examples).then(async patterns => {
+        const v = await loadVoice(req.sid);
         v.patterns = patterns;
         v.lastAnalyzed = new Date().toISOString();
-        saveVoice(req.sid, v);
+        await saveVoice(req.sid, v);
         console.log(`Voz actualizada con ${voiceExamples} ejemplos`);
       }).catch(err => console.error('Error analizando voz:', err.message));
     }
@@ -577,11 +631,11 @@ app.post('/api/reject', (req, res) => {
 app.get('/api/modules', (req, res) => res.json(listModules()));
 
 // ─── API: Perfil de marca ────────────────────────────────────────────────────
-app.get('/api/profile', (req, res) => res.json(loadProfile(req.sid)));
+app.get('/api/profile', async (req, res) => res.json(await loadProfile(req.sid)));
 
-app.post('/api/profile', express.json(), (req, res) => {
+app.post('/api/profile', express.json(), async (req, res) => {
   try {
-    saveProfile(req.sid, req.body);
+    await saveProfile(req.sid, req.body);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'No se pudo guardar el perfil' });
@@ -591,17 +645,31 @@ app.post('/api/profile', express.json(), (req, res) => {
 // ─── API: Reseñas ────────────────────────────────────────────────────────────
 const REVIEWS_PATH = path.join(__file, 'reviews.json');
 
-function loadReviews() {
+async function loadReviews() {
+  if (redis) {
+    try {
+      const data = await redis.get('reviews');
+      if (data) return data;
+    } catch (err) { console.error('Redis error (loadReviews), usando fallback local:', err.message); }
+  }
   try { return JSON.parse(fs.readFileSync(REVIEWS_PATH, 'utf8')); }
   catch { return []; }
 }
 
-app.get('/api/reviews', (req, res) => res.json(loadReviews()));
+async function saveReviews(reviews) {
+  if (redis) {
+    try { await redis.set('reviews', reviews); return; }
+    catch (err) { console.error('Redis error (saveReviews), usando fallback local:', err.message); }
+  }
+  fs.writeFileSync(REVIEWS_PATH, JSON.stringify(reviews, null, 2), 'utf8');
+}
 
-app.post('/api/reviews', (req, res) => {
+app.get('/api/reviews', async (req, res) => res.json(await loadReviews()));
+
+app.post('/api/reviews', async (req, res) => {
   const { name, role, text, rating } = req.body;
   if (!name?.trim() || !text?.trim()) return res.status(400).json({ error: 'Nombre y reseña son obligatorios' });
-  const reviews = loadReviews();
+  const reviews = await loadReviews();
   const entry = {
     id: Date.now(),
     name: name.trim(),
@@ -611,7 +679,7 @@ app.post('/api/reviews', (req, res) => {
     date: new Date().toISOString()
   };
   reviews.unshift(entry);
-  fs.writeFileSync(REVIEWS_PATH, JSON.stringify(reviews, null, 2), 'utf8');
+  await saveReviews(reviews);
   res.json({ success: true, entry });
 });
 
@@ -623,24 +691,38 @@ app.post('/api/reviews', (req, res) => {
 const TRIAL_REQUESTS_PATH = path.join(__file, 'trial-requests.json');
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-function loadTrialRequests() {
+async function loadTrialRequests() {
+  if (redis) {
+    try {
+      const data = await redis.get('trial-requests');
+      if (data) return data;
+    } catch (err) { console.error('Redis error (loadTrialRequests), usando fallback local:', err.message); }
+  }
   try { return JSON.parse(fs.readFileSync(TRIAL_REQUESTS_PATH, 'utf8')); }
   catch { return []; }
+}
+
+async function saveTrialRequests(requests) {
+  if (redis) {
+    try { await redis.set('trial-requests', requests); return; }
+    catch (err) { console.error('Redis error (saveTrialRequests), usando fallback local:', err.message); }
+  }
+  fs.writeFileSync(TRIAL_REQUESTS_PATH, JSON.stringify(requests, null, 2), 'utf8');
 }
 
 // Si defines ADMIN_KEY, esta ruta pide ?key=... para no dejar los leads
 // (nombre/email de quien pide la prueba gratis) visibles a cualquiera que
 // entre a la URL — relevante sobre todo en una demo pública sin APP_PASSWORD.
 // Sin ADMIN_KEY definida, queda abierta como hasta ahora (uso local).
-app.get('/api/trial-requests', (req, res) => {
+app.get('/api/trial-requests', async (req, res) => {
   const key = process.env.ADMIN_KEY;
   if (key && req.query.key !== key && req.headers['x-admin-key'] !== key) {
     return res.status(401).json({ error: 'Falta ?key=... (ADMIN_KEY) para ver los leads' });
   }
-  res.json(loadTrialRequests());
+  res.json(await loadTrialRequests());
 });
 
-app.post('/api/trial-request', (req, res) => {
+app.post('/api/trial-request', async (req, res) => {
   const { name, email, business, sector, message } = req.body;
   if (!name?.trim() || !email?.trim() || !sector?.trim()) {
     return res.status(400).json({ error: 'Nombre, email y sector son obligatorios' });
@@ -648,7 +730,7 @@ app.post('/api/trial-request', (req, res) => {
   if (!EMAIL_RE.test(email.trim())) {
     return res.status(400).json({ error: 'El email no parece válido' });
   }
-  const requests = loadTrialRequests();
+  const requests = await loadTrialRequests();
   const entry = {
     id: Date.now(),
     name: name.trim(),
@@ -660,7 +742,7 @@ app.post('/api/trial-request', (req, res) => {
     date: new Date().toISOString()
   };
   requests.unshift(entry);
-  fs.writeFileSync(TRIAL_REQUESTS_PATH, JSON.stringify(requests, null, 2), 'utf8');
+  await saveTrialRequests(requests);
   res.json({ success: true });
 });
 
@@ -668,13 +750,12 @@ app.post('/api/trial-request', (req, res) => {
 app.post('/api/best-time', async (req, res) => {
   const { sector, caption } = req.body;
   try {
-    const response = await axios.post(
-      'https://api.groq.com/openai/v1/chat/completions',
-      {
-        model: 'meta-llama/llama-4-scout-17b-16e-instruct',
-        messages: [{
-          role: 'user',
-          content: `Eres un experto en estrategia de Instagram con datos de engagement por sector.
+    const response = await callGroq({
+      model: 'qwen/qwen3.6-27b',
+      reasoning_effort: 'none',
+      messages: [{
+        role: 'user',
+        content: `Eres un experto en estrategia de Instagram con datos de engagement por sector.
 
 Sector del negocio: ${sector || 'negocio general'}
 Primeras palabras del caption: "${(caption || '').slice(0, 120)}"
@@ -685,11 +766,9 @@ Basándote en patrones reales de engagement en Instagram para este sector, respo
   "horas": "18:00 – 20:00",
   "razon": "Una frase corta explicando por qué ese momento funciona para este sector específico"
 }`
-        }],
-        max_tokens: 200
-      },
-      { headers: { Authorization: `Bearer ${process.env.GROQ_API_KEY}`, 'Content-Type': 'application/json' } }
-    );
+      }],
+      max_tokens: 200
+    });
 
     const raw = response.data.choices[0].message.content.trim();
     const json = JSON.parse(raw.match(/\{[\s\S]*\}/)[0]);
@@ -701,8 +780,8 @@ Basándote en patrones reales de engagement en Instagram para este sector, respo
 });
 
 // ─── API: Voz aprendida ──────────────────────────────────────────────────────
-app.get('/api/voice', (req, res) => {
-  const { examples, patterns, lastAnalyzed } = loadVoice(req.sid);
+app.get('/api/voice', async (req, res) => {
+  const { examples, patterns, lastAnalyzed } = await loadVoice(req.sid);
   res.json({ count: examples.length, patterns, lastAnalyzed });
 });
 
@@ -735,4 +814,5 @@ app.listen(PORT, () => {
   console.log(`AutoPost CM corriendo en http://localhost:${PORT}`);
   if (!IS_PROD) console.log(`Frontend dev: http://localhost:5173`);
   console.log(process.env.APP_PASSWORD ? 'Autenticación: ACTIVADA (APP_PASSWORD definido)' : 'Autenticación: desactivada (define APP_PASSWORD para activarla)');
+  console.log(redis ? 'Persistencia: Upstash Redis (sobrevive a redeploys)' : 'Persistencia: archivos locales (define UPSTASH_REDIS_REST_URL/TOKEN para producción)');
 });
