@@ -237,3 +237,10 @@
   font-size: 13px;
   color: var(--text2);
 }
+
+/* ══════════════════════════ Responsive ══════════════════════════ */
+@media (max-width: 600px) {
+  .day-card-inner { grid-template-columns: 1fr; }
+  .day-image-wrap { width: 100%; height: 160px; }
+  .schedule-panel-fields { flex-direction: column; align-items: stretch; }
+}

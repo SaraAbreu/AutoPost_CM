@@ -11,18 +11,40 @@ export default function Settings() {
   const [loading, setLoading] = useState(true);
   const [voice, setVoice] = useState({ count: 0, patterns: null });
   const [modules, setModules] = useState([]);
+  const [instagram, setInstagram] = useState({ connected: false, username: null });
+  const [instagramNotice, setInstagramNotice] = useState(null); // { type: 'ok'|'error', text }
 
   useEffect(() => {
     Promise.all([
       fetch('/api/profile').then(r => r.json()),
       fetch('/api/voice').then(r => r.json()),
-      fetch('/api/modules').then(r => r.json())
-    ]).then(([profile, voiceData, modulesData]) => {
+      fetch('/api/modules').then(r => r.json()),
+      fetch('/api/instagram/status').then(r => r.json()).catch(() => ({ connected: false }))
+    ]).then(([profile, voiceData, modulesData, instagramData]) => {
       if (profile) setForm(f => ({ ...f, ...profile }));
       if (voiceData) setVoice(voiceData);
       if (modulesData) setModules(modulesData);
+      if (instagramData) setInstagram(instagramData);
     }).finally(() => setLoading(false));
+
+    // El backend redirige acá con ?instagram_connected=1 o ?instagram_error=...
+    // después de que el usuario vuelve de autorizar en Instagram.
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('instagram_connected')) {
+      setInstagramNotice({ type: 'ok', text: '¡Instagram conectado correctamente!' });
+    } else if (params.get('instagram_error')) {
+      setInstagramNotice({ type: 'error', text: `No se pudo conectar Instagram (${params.get('instagram_error')}).` });
+    }
+    if (params.get('instagram_connected') || params.get('instagram_error')) {
+      window.history.replaceState({}, '', window.location.pathname);
+    }
   }, []);
+
+  async function disconnectInstagram() {
+    await fetch('/api/instagram/disconnect', { method: 'POST' });
+    setInstagram({ connected: false, username: null });
+    setInstagramNotice(null);
+  }
 
   const activeModule = modules.find(m => m.id === form.modulo);
   const extraFields = activeModule?.extraFields ?? [];
@@ -134,6 +156,33 @@ export default function Settings() {
             </div>
           ))}
 
+        </div>
+
+        {/* Sección conectar Instagram */}
+        <div className="instagram-section">
+          <div className="instagram-header">
+            <span className="instagram-title">📷 Cuenta de Instagram</span>
+          </div>
+
+          {instagramNotice && (
+            <p className={`instagram-notice instagram-notice-${instagramNotice.type}`}>
+              {instagramNotice.type === 'ok' ? '✅' : '⚠️'} {instagramNotice.text}
+            </p>
+          )}
+
+          {instagram.connected ? (
+            <div className="instagram-connected-row">
+              <span className="instagram-connected-user">✅ Conectado como <strong>@{instagram.username}</strong></span>
+              <button type="button" className="btn btn-ghost" onClick={disconnectInstagram}>Desconectar</button>
+            </div>
+          ) : (
+            <>
+              <p className="instagram-empty">
+                Conectá tu cuenta de Instagram para poder aprobar y publicar directamente desde acá.
+              </p>
+              <a href="/api/instagram/connect" className="btn btn-primary">Conectar mi Instagram</a>
+            </>
+          )}
         </div>
 
         {/* Sección voz aprendida */}

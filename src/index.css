@@ -7,11 +7,15 @@
   --bg3:      #13131f;
   --bg4:      #1a1a2a;
 
-  /* Accent — índigo vibrante */
-  --accent:        #6366f1;
-  --accent-hover:  #4f52e0;
-  --accent-glow:   rgba(99,102,241,0.25);
-  --accent-subtle: rgba(99,102,241,0.08);
+  /* Accent — ámbar, mismo que el laboratorio del login */
+  --accent:        #f0a202;
+  --accent-hover:  #c97f00;
+  --accent-glow:   rgba(240,162,2,0.25);
+  --accent-subtle: rgba(240,162,2,0.08);
+
+  /* Acento secundario — usado en toggles/etiquetas "semana" y detalles de profundidad */
+  --accent2:        #8b5cf6;
+  --accent2-glow:   rgba(139,92,246,0.28);
 
   /* Estado */
   --success:       #10b981;
@@ -29,19 +33,28 @@
   --border:       rgba(255,255,255,0.06);
   --border-hover: rgba(255,255,255,0.12);
 
+  /* Vidrio esmerilado */
+  --glass-bg:          rgba(22,22,38,0.6);
+  --glass-bg-strong:   rgba(28,28,46,0.72);
+  --glass-border:      rgba(255,255,255,0.09);
+  --glass-border-hover: rgba(255,255,255,0.2);
+  --glass-blur: blur(20px) saturate(150%);
+
   /* Radios */
-  --radius:    14px;
-  --radius-sm: 8px;
-  --radius-xs: 6px;
+  --radius:    18px;
+  --radius-sm: 11px;
+  --radius-xs: 7px;
 
   /* Sombras */
   --shadow-sm: 0 1px 3px rgba(0,0,0,0.4), 0 1px 2px rgba(0,0,0,0.3);
-  --shadow:    0 4px 16px rgba(0,0,0,0.5), 0 1px 4px rgba(0,0,0,0.3);
-  --shadow-lg: 0 12px 40px rgba(0,0,0,0.6), 0 2px 8px rgba(0,0,0,0.4);
-  --glow:      0 0 24px var(--accent-glow);
+  --shadow:    0 8px 28px rgba(0,0,0,0.45), 0 1px 4px rgba(0,0,0,0.3);
+  --shadow-lg: 0 20px 60px rgba(0,0,0,0.55), 0 2px 8px rgba(0,0,0,0.4);
+  --glow:      0 0 28px var(--accent-glow);
 }
 
 html, body, #root { height: 100%; }
+
+html { overflow-x: hidden; }
 
 body {
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
@@ -50,8 +63,48 @@ body {
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  /* Textura sutil de fondo */
-  background-image: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(99,102,241,0.08), transparent);
+  position: relative;
+  overflow-x: hidden;
+  min-height: 100%;
+}
+
+/* ── Fondo con profundidad: manchas de luz difuminadas, fijas detrás del
+   contenido, para que los paneles de vidrio tengan algo translúcido que
+   mostrar. Deriva lentamente para dar sensación de vida sin distraer. ── */
+body::before, body::after {
+  content: '';
+  position: fixed;
+  border-radius: 50%;
+  z-index: -1;
+  pointer-events: none;
+  filter: blur(90px);
+  animation: drift 26s ease-in-out infinite alternate;
+}
+
+body::before {
+  width: 620px;
+  height: 620px;
+  top: -220px;
+  left: -160px;
+  background: radial-gradient(circle, rgba(240,162,2,0.30), transparent 70%);
+}
+
+body::after {
+  width: 680px;
+  height: 680px;
+  bottom: -260px;
+  right: -200px;
+  background: radial-gradient(circle, rgba(139,92,246,0.24), transparent 70%);
+  animation-delay: -13s;
+}
+
+@keyframes drift {
+  0%   { transform: translate(0, 0) scale(1); }
+  100% { transform: translate(40px, -30px) scale(1.08); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body::before, body::after { animation: none; }
 }
 
 button {
@@ -80,19 +133,19 @@ textarea, input, select {
   font-size: 14px;
   font-weight: 600;
   letter-spacing: -0.01em;
-  transition: all 0.18s ease;
+  transition: all 0.2s cubic-bezier(.2,.8,.2,1);
   white-space: nowrap;
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  color: #fff;
-  box-shadow: 0 2px 12px rgba(99,102,241,0.35), inset 0 1px 0 rgba(255,255,255,0.15);
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  color: #1a1300;
+  box-shadow: 0 2px 12px rgba(240,162,2,0.35), inset 0 1px 0 rgba(255,255,255,0.25);
 }
 .btn-primary:hover:not(:disabled) {
-  background: linear-gradient(135deg, #4f52e0, #7c4fdd);
-  box-shadow: 0 4px 20px rgba(99,102,241,0.5), inset 0 1px 0 rgba(255,255,255,0.15);
-  transform: translateY(-1px);
+  background: linear-gradient(135deg, #ffb524, var(--accent-hover));
+  box-shadow: 0 6px 26px rgba(240,162,2,0.55), inset 0 1px 0 rgba(255,255,255,0.25);
+  transform: translateY(-2px);
 }
 .btn-primary:active:not(:disabled) { transform: translateY(0); }
 
@@ -102,8 +155,8 @@ textarea, input, select {
   box-shadow: 0 2px 12px rgba(16,185,129,0.3), inset 0 1px 0 rgba(255,255,255,0.15);
 }
 .btn-success:hover:not(:disabled) {
-  box-shadow: 0 4px 20px rgba(16,185,129,0.45);
-  transform: translateY(-1px);
+  box-shadow: 0 6px 24px rgba(16,185,129,0.5);
+  transform: translateY(-2px);
 }
 
 .btn-danger {
@@ -112,32 +165,41 @@ textarea, input, select {
   box-shadow: 0 2px 12px rgba(244,63,94,0.3), inset 0 1px 0 rgba(255,255,255,0.15);
 }
 .btn-danger:hover:not(:disabled) {
-  box-shadow: 0 4px 20px rgba(244,63,94,0.45);
-  transform: translateY(-1px);
+  box-shadow: 0 6px 24px rgba(244,63,94,0.5);
+  transform: translateY(-2px);
 }
 
 .btn-ghost {
-  background: transparent;
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
   color: var(--text2);
-  border: 1px solid var(--border);
+  border: 1px solid var(--glass-border);
 }
 .btn-ghost:hover:not(:disabled) {
-  border-color: var(--border-hover);
+  border-color: var(--glass-border-hover);
   color: var(--text);
-  background: rgba(255,255,255,0.03);
+  background: var(--glass-bg-strong);
 }
 
-/* ── Cards ── */
+/* ── Cards de vidrio esmerilado ── */
 .card {
-  background: var(--bg2);
-  border: 1px solid var(--border);
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
   border-radius: var(--radius);
   padding: 20px;
-  box-shadow: var(--shadow-sm);
-  transition: border-color 0.2s;
+  box-shadow: var(--shadow-sm), inset 0 1px 0 rgba(255,255,255,0.05);
+  transition: border-color 0.25s, transform 0.25s, box-shadow 0.25s;
+  position: relative;
 }
 
-.card:hover { border-color: var(--border-hover); }
+.card:hover {
+  border-color: var(--glass-border-hover);
+  transform: translateY(-3px);
+  box-shadow: var(--shadow), inset 0 1px 0 rgba(255,255,255,0.07);
+}
 
 /* ── Badges ── */
 .badge {
@@ -150,11 +212,12 @@ textarea, input, select {
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
+  backdrop-filter: blur(8px);
 }
 .badge-pending  { background: rgba(245,158,11,0.12); color: var(--warning); border: 1px solid rgba(245,158,11,0.2); }
 .badge-published { background: rgba(16,185,129,0.12); color: var(--success); border: 1px solid rgba(16,185,129,0.2); }
 .badge-rejected { background: rgba(244,63,94,0.12); color: var(--danger); border: 1px solid rgba(244,63,94,0.2); }
-.badge-demo     { background: rgba(99,102,241,0.12); color: var(--accent); border: 1px solid rgba(99,102,241,0.2); }
+.badge-demo     { background: rgba(240,162,2,0.12); color: var(--accent); border: 1px solid rgba(240,162,2,0.2); }
 
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 5px; }
@@ -164,23 +227,34 @@ textarea, input, select {
 
 /* ── Inputs globales ── */
 input, select, textarea {
-  background: var(--bg3);
+  background: rgba(255,255,255,0.035);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   color: var(--text);
   padding: 10px 12px;
   font-size: 14px;
-  transition: border-color 0.18s, box-shadow 0.18s;
+  transition: border-color 0.18s, box-shadow 0.18s, background 0.18s;
   width: 100%;
 }
 
 input:focus, select:focus, textarea:focus {
   outline: none;
   border-color: var(--accent);
+  background: rgba(255,255,255,0.05);
   box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
 input::placeholder, textarea::placeholder { color: var(--text3); }
+
+/* ── Título de página con acento en degradado ── */
+.page-title {
+  background: linear-gradient(135deg, var(--text), var(--text) 55%, var(--accent));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
 
 /* ── Spinner ── */
 .spinner {

@@ -6,3 +6,4 @@ server/voice.json
 server/tmp-uploads/
 server/trial-requests.json
 server/scheduled-posts.json
+server/data/

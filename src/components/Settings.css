@@ -54,6 +54,40 @@
   margin: 0;
 }
 
+/* ── Conectar Instagram ── */
+.instagram-section {
+  background: rgba(240, 162, 2, 0.06);
+  border: 1px solid rgba(240, 162, 2, 0.22);
+  border-radius: var(--radius);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.instagram-title { font-size: 15px; font-weight: 700; color: var(--accent); }
+
+.instagram-empty { font-size: 13px; color: var(--text2); line-height: 1.6; }
+
+.instagram-connected-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.instagram-connected-user { font-size: 14px; color: var(--text); }
+
+.instagram-notice {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+.instagram-notice-ok { background: var(--success-subtle); color: var(--success); border: 1px solid rgba(16,185,129,0.25); }
+.instagram-notice-error { background: var(--danger-subtle); color: var(--danger); border: 1px solid rgba(244,63,94,0.25); }
+
 /* ── Voz aprendida ── */
 .voice-section {
   background: rgba(168, 85, 247, 0.07);
@@ -109,4 +143,10 @@
 .settings-saved {
   font-size: 14px;
   color: #4ade80;
+}
+
+/* ══════════════════════════ Responsive ══════════════════════════ */
+@media (max-width: 640px) {
+  .settings-grid { grid-template-columns: 1fr; }
+  .settings-footer { flex-wrap: wrap; justify-content: space-between; }
 }

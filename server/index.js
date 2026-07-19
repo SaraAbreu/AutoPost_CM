@@ -10,6 +10,12 @@ import 'dotenv/config';
 import { Redis } from '@upstash/redis';
 import { getModule, listModules } from './modules/index.js';
 import { generateImage } from './services/imageGen.js';
+import bcrypt from 'bcryptjs';
+import { isDbConfigured } from './db.js';
+import { createUser, findUserByEmail, listUserIds, saveInstagramAccount, getInstagramAccount, clearInstagramAccount } from './auth/users.js';
+import { signToken, verifyToken } from './auth/jwt.js';
+import { authMiddleware, requireIdentity } from './middleware/auth.js';
+import { isInstagramOAuthConfigured, getAuthorizeUrl, completeInstagramLogin } from './auth/instagram.js';
 
 // Persistencia: si hay credenciales de Upstash, los datos "de verdad" (perfil,
 // voz aprendida, reseñas, leads) viven en Redis y sobreviven a cualquier
@@ -96,18 +102,52 @@ function demoLimitGuard(req, res, next) {
   next();
 }
 
-// sid presente (demo pública) -> perfil/voz/historial propios de esa sesión,
-// en memoria (aceptable perderlos al reiniciar, es solo una demo). sid null
-// (cliente real) -> dato persistente compartido: Redis si hay credenciales,
-// si no el fichero local de siempre (fallback para desarrollo).
-async function loadProfile(sid) {
-  if (sid) {
-    if (!sessionProfiles.has(sid)) {
+// Tres identidades posibles por request, en este orden de prioridad: usuario
+// autenticado (persistente, aislado) > sesión demo (memoria, efímera) >
+// "shared" (modo legado de cliente único sin cuentas, dataset compartido).
+// Comprobamos userId ANTES que sid a propósito: si un usuario logueado
+// conserva una cookie demo_sid residual, no debe perder acceso a sus datos
+// reales por eso.
+function getTenant(req) {
+  if (req.userId) return { type: 'user', id: req.userId };
+  if (req.sid) return { type: 'demo', id: req.sid };
+  return { type: 'shared' };
+}
+
+function userDataPath(userId, filename) {
+  return path.join(__file, 'data', 'users', String(userId), filename);
+}
+
+function writeUserFile(userId, filename, data) {
+  const p = userDataPath(userId, filename);
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p, JSON.stringify(data, null, 2), 'utf8');
+}
+
+// tenant.type === 'demo' -> perfil/voz/historial propios de esa sesión, en
+// memoria (aceptable perderlos al reiniciar, es solo una demo). tenant.type
+// === 'user' -> dato persistente y aislado por usuario: Redis (namespaced) si
+// hay credenciales, si no un archivo propio en server/data/users/<id>/.
+// tenant.type === 'shared' -> dato persistente compartido de siempre: Redis
+// si hay credenciales, si no el fichero local de siempre (fallback dev).
+async function loadProfile(tenant) {
+  if (tenant.type === 'demo') {
+    if (!sessionProfiles.has(tenant.id)) {
       let base = {};
       try { base = JSON.parse(fs.readFileSync(DEFAULT_PROFILE_PATH, 'utf8')); } catch {}
-      sessionProfiles.set(sid, { ...base });
+      sessionProfiles.set(tenant.id, { ...base });
     }
-    return sessionProfiles.get(sid);
+    return sessionProfiles.get(tenant.id);
+  }
+  if (tenant.type === 'user') {
+    if (redis) {
+      try {
+        const data = await redis.get(`profile:user:${tenant.id}`);
+        if (data) return data;
+      } catch (err) { console.error('Redis error (loadProfile user), usando fallback local:', err.message); }
+    }
+    try { return JSON.parse(fs.readFileSync(userDataPath(tenant.id, 'profile.json'), 'utf8')); }
+    catch { return {}; }
   }
   if (redis) {
     try {
@@ -122,8 +162,16 @@ async function loadProfile(sid) {
   }
 }
 
-async function saveProfile(sid, data) {
-  if (sid) { sessionProfiles.set(sid, data); return; }
+async function saveProfile(tenant, data) {
+  if (tenant.type === 'demo') { sessionProfiles.set(tenant.id, data); return; }
+  if (tenant.type === 'user') {
+    if (redis) {
+      try { await redis.set(`profile:user:${tenant.id}`, data); return; }
+      catch (err) { console.error('Redis error (saveProfile user), usando fallback local:', err.message); }
+    }
+    writeUserFile(tenant.id, 'profile.json', data);
+    return;
+  }
   if (redis) {
     try { await redis.set('profile', data); return; }
     catch (err) { console.error('Redis error (saveProfile), usando fallback local:', err.message); }
@@ -131,10 +179,20 @@ async function saveProfile(sid, data) {
   fs.writeFileSync(PROFILE_PATH, JSON.stringify(data, null, 2), 'utf8');
 }
 
-async function loadVoice(sid) {
-  if (sid) {
-    if (!sessionVoices.has(sid)) sessionVoices.set(sid, { examples: [], patterns: null });
-    return sessionVoices.get(sid);
+async function loadVoice(tenant) {
+  if (tenant.type === 'demo') {
+    if (!sessionVoices.has(tenant.id)) sessionVoices.set(tenant.id, { examples: [], patterns: null });
+    return sessionVoices.get(tenant.id);
+  }
+  if (tenant.type === 'user') {
+    if (redis) {
+      try {
+        const data = await redis.get(`voice:user:${tenant.id}`);
+        if (data) return data;
+      } catch (err) { console.error('Redis error (loadVoice user), usando fallback local:', err.message); }
+    }
+    try { return JSON.parse(fs.readFileSync(userDataPath(tenant.id, 'voice.json'), 'utf8')); }
+    catch { return { examples: [], patterns: null }; }
   }
   if (redis) {
     try {
@@ -146,8 +204,16 @@ async function loadVoice(sid) {
   catch { return { examples: [], patterns: null }; }
 }
 
-async function saveVoice(sid, data) {
-  if (sid) { sessionVoices.set(sid, data); return; }
+async function saveVoice(tenant, data) {
+  if (tenant.type === 'demo') { sessionVoices.set(tenant.id, data); return; }
+  if (tenant.type === 'user') {
+    if (redis) {
+      try { await redis.set(`voice:user:${tenant.id}`, data); return; }
+      catch (err) { console.error('Redis error (saveVoice user), usando fallback local:', err.message); }
+    }
+    writeUserFile(tenant.id, 'voice.json', data);
+    return;
+  }
   if (redis) {
     try { await redis.set('voice', data); return; }
     catch (err) { console.error('Redis error (saveVoice), usando fallback local:', err.message); }
@@ -155,12 +221,36 @@ async function saveVoice(sid, data) {
   fs.writeFileSync(VOICE_PATH, JSON.stringify(data, null, 2), 'utf8');
 }
 
-function getHistory(sid) {
-  if (sid) {
-    if (!sessionHistories.has(sid)) sessionHistories.set(sid, []);
-    return sessionHistories.get(sid);
+async function getHistory(tenant) {
+  if (tenant.type === 'demo') {
+    if (!sessionHistories.has(tenant.id)) sessionHistories.set(tenant.id, []);
+    return sessionHistories.get(tenant.id);
   }
-  return history;
+  if (tenant.type === 'shared') return history; // en memoria, como hoy — nunca se persiste
+  // tenant.type === 'user' — persistente, namespaced por usuario
+  if (redis) {
+    try {
+      const data = await redis.get(`history:user:${tenant.id}`);
+      if (data) return data;
+    } catch (err) { console.error('Redis error (getHistory user), usando fallback local:', err.message); }
+  }
+  try { return JSON.parse(fs.readFileSync(userDataPath(tenant.id, 'history.json'), 'utf8')); }
+  catch { return []; }
+}
+
+// Companion de getHistory(): para 'demo'/'shared' la mutación en memoria ya
+// es visible (misma referencia), no hace falta guardar nada — solo 'user'
+// necesita persistir explícitamente. Cada entrada lleva su imagen en base64
+// inline, así que capamos a las últimas 50 para no reventar el límite de
+// tamaño de request de Upstash Free.
+async function saveHistory(tenant, list) {
+  if (tenant.type !== 'user') return;
+  const capped = list.slice(0, 50);
+  if (redis) {
+    try { await redis.set(`history:user:${tenant.id}`, capped); return; }
+    catch (err) { console.error('Redis error (saveHistory user), usando fallback local:', err.message); }
+  }
+  writeUserFile(tenant.id, 'history.json', capped);
 }
 
 const GROQ_URL = 'https://api.groq.com/openai/v1/chat/completions';
@@ -225,18 +315,18 @@ function profileContext(p) {
   return `CONTEXTO DE MARCA (úsalo siempre, no pongas placeholders):\n${lines.join('\n')}\n\n`;
 }
 
-async function voiceContext(sid) {
-  const { patterns } = await loadVoice(sid);
+async function voiceContext(tenant) {
+  const { patterns } = await loadVoice(tenant);
   if (!patterns) return '';
   return `ESTILO APRENDIDO DEL USUARIO (respétalos estrictamente):\n${patterns}\n\n`;
 }
 
 // Genera UN caption para UNA imagen con UN ángulo concreto. La usan tanto
 // /api/generate-day como /api/generate-week cuando hay varias fotos (una por día).
-async function generateCaptionForAngle(base64, mimeType, profile, module, angleDef, sid) {
+async function generateCaptionForAngle(base64, mimeType, profile, module, angleDef, tenant) {
   const moduleExtra = module.promptExtra ? module.promptExtra(profile) : '';
   const complianceExtra = module.compliance ? module.compliance(profile) : '';
-  const voiceCtx = await voiceContext(sid);
+  const voiceCtx = await voiceContext(tenant);
 
   const payload = {
     model: 'qwen/qwen3.6-27b',
@@ -291,13 +381,17 @@ app.use(cors());
 app.use(express.json({ limit: '100mb' }));
 app.use('/tmp-uploads', express.static(TMP_UPLOADS_DIR));
 app.use('/api', sessionMiddleware); // asigna/lee la cookie demo_sid (solo si DEMO_MODE)
+app.use('/api', authMiddleware); // decodifica la cookie auth_token si existe (solo si DATABASE_URL)
 
-// ─── Autenticación básica (opcional) ─────────────────────────────────────────
-// Si defines APP_PASSWORD en el .env, toda la app (frontend + API) pide contraseña
-// antes de dejar pasar nada. Pensado para desplegar una demo en Railway sin
-// dejarla abierta a cualquiera que tenga la URL. Si no defines APP_PASSWORD,
-// la app se comporta como hasta ahora (sin login) — útil para desarrollo local.
-if (process.env.APP_PASSWORD) {
+// ─── Autenticación básica (opcional, modo legado) ────────────────────────────
+// Si defines APP_PASSWORD en el .env Y NO hay DATABASE_URL configurada, toda
+// la app (frontend + API) pide contraseña antes de dejar pasar nada — pensado
+// para el modelo de "un despliegue por cliente" (ver scripts/create-vertical-repo.js).
+// En cuanto defines DATABASE_URL, este gate se desactiva: el despliegue pasa a
+// ser multi-tenant y usa cuentas de usuario reales (ver requireIdentity más
+// abajo) en su lugar. Sin APP_PASSWORD ni DATABASE_URL, la app sigue abierta
+// como siempre — útil para desarrollo local.
+if (process.env.APP_PASSWORD && !isDbConfigured) {
   app.use((req, res, next) => {
     const header = req.headers.authorization;
     if (header?.startsWith('Basic ')) {
@@ -310,19 +404,152 @@ if (process.env.APP_PASSWORD) {
   });
 }
 
+// ─── API: Cuentas de usuario (solo si DATABASE_URL está configurada) ────────
+const AUTH_COOKIE_OPTS = {
+  httpOnly: true,
+  sameSite: 'Lax',
+  maxAge: 30 * 24 * 3600 * 1000, // 30 días, igual que la expiración del JWT
+};
+
+// Límite simple de intentos de login por IP, en memoria — mismo patrón que
+// demoUsage/demoLimitGuard más arriba. Protege contra fuerza bruta básica;
+// no persiste entre reinicios, suficiente para esta fase.
+const loginAttempts = new Map(); // "ip" -> { count, resetAt }
+const LOGIN_MAX_ATTEMPTS = 10;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+
+function loginRateLimit(req, res, next) {
+  const ip = (req.headers['x-forwarded-for']?.split(',')[0].trim()) || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  const entry = loginAttempts.get(ip);
+  if (!entry || now > entry.resetAt) {
+    loginAttempts.set(ip, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
+    return next();
+  }
+  if (entry.count >= LOGIN_MAX_ATTEMPTS) {
+    return res.status(429).json({ error: 'Demasiados intentos. Prueba de nuevo en unos minutos.' });
+  }
+  entry.count++;
+  next();
+}
+
+function setAuthCookie(res, token) {
+  res.cookie('auth_token', token, { ...AUTH_COOKIE_OPTS, secure: IS_PROD });
+}
+
+app.post('/api/auth/register', async (req, res) => {
+  if (!isDbConfigured) return res.status(400).json({ error: 'Cuentas de usuario no disponibles en este despliegue' });
+  try {
+    const { email, password } = req.body;
+    if (!email?.trim() || !EMAIL_RE.test(email.trim())) {
+      return res.status(400).json({ error: 'El email no parece válido' });
+    }
+    if (!password || password.length < 8) {
+      return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
+    }
+    const passwordHash = await bcrypt.hash(password, 10);
+    const user = await createUser(email, passwordHash);
+    const token = signToken(user);
+    setAuthCookie(res, token);
+    res.status(201).json({ success: true, email: user.email, plan: user.plan });
+  } catch (err) {
+    if (err.code === 'EMAIL_TAKEN') return res.status(409).json({ error: err.message });
+    console.error('Error en /api/auth/register:', err.message);
+    res.status(500).json({ error: 'No se pudo crear la cuenta' });
+  }
+});
+
+app.post('/api/auth/login', loginRateLimit, async (req, res) => {
+  if (!isDbConfigured) return res.status(400).json({ error: 'Cuentas de usuario no disponibles en este despliegue' });
+  try {
+    const { email, password } = req.body;
+    const user = await findUserByEmail(email || '');
+    if (!user) return res.status(401).json({ error: 'Email o contraseña incorrectos' });
+    const valid = await bcrypt.compare(password || '', user.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Email o contraseña incorrectos' });
+    const token = signToken(user);
+    setAuthCookie(res, token);
+    res.json({ success: true, email: user.email, plan: user.plan });
+  } catch (err) {
+    console.error('Error en /api/auth/login:', err.message);
+    res.status(500).json({ error: 'No se pudo iniciar sesión' });
+  }
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  res.clearCookie('auth_token', { httpOnly: true, sameSite: 'Lax', secure: IS_PROD });
+  res.json({ success: true });
+});
+
+app.get('/api/auth/me', (req, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'No has iniciado sesión' });
+  res.json({ email: req.userEmail, plan: req.userPlan });
+});
+
+// ─── API: Conectar Instagram por usuario (OAuth "Instagram API with Instagram Login") ──
+// Cada usuario conecta SU PROPIA cuenta desde Configuración — reemplaza, para
+// despliegues multi-tenant, el META_ACCESS_TOKEN/META_INSTAGRAM_ACCOUNT_ID
+// globales del .env (ver publishToMeta más abajo, que sigue usando esos como
+// fallback para el modo "cliente único" de siempre).
+app.get('/api/instagram/status', requireIdentity, async (req, res) => {
+  if (!isDbConfigured || !req.userId) return res.json({ connected: false });
+  const account = await getInstagramAccount(req.userId);
+  res.json({ connected: !!account?.instagram_access_token, username: account?.instagram_username || null });
+});
+
+app.get('/api/instagram/connect', requireIdentity, (req, res) => {
+  if (!isDbConfigured || !req.userId) return res.status(401).json({ error: 'Inicia sesión para conectar Instagram' });
+  if (!isInstagramOAuthConfigured) return res.status(400).json({ error: 'Conexión con Instagram no configurada en este despliegue (falta INSTAGRAM_APP_ID/INSTAGRAM_APP_SECRET)' });
+  if (!process.env.PUBLIC_URL) return res.status(400).json({ error: 'Falta PUBLIC_URL en .env' });
+  const state = crypto.randomBytes(16).toString('hex');
+  res.cookie('ig_oauth_state', state, { httpOnly: true, sameSite: 'Lax', maxAge: 10 * 60 * 1000, secure: IS_PROD });
+  res.redirect(getAuthorizeUrl(state));
+});
+
+// Meta redirige acá tras la autorización — esta request no viene del frontend
+// (viene del navegador siguiendo la redirección de Instagram), así que la
+// identidad del usuario se recupera de la cookie auth_token, no de fetch/JSON.
+app.get('/api/instagram/callback', async (req, res) => {
+  const { code, state, error, error_description } = req.query;
+  const cookies = parseCookies(req);
+  res.clearCookie('ig_oauth_state', { httpOnly: true, sameSite: 'Lax', secure: IS_PROD });
+
+  if (error) return res.redirect(`/?instagram_error=${encodeURIComponent(error_description || error)}`);
+  if (!code || !state || state !== cookies.ig_oauth_state) return res.redirect('/?instagram_error=estado_invalido');
+
+  const payload = cookies.auth_token && verifyToken(cookies.auth_token);
+  if (!payload) return res.redirect('/?instagram_error=sesion_expirada');
+
+  try {
+    const account = await completeInstagramLogin(code);
+    await saveInstagramAccount(payload.sub, account);
+    res.redirect('/?instagram_connected=1');
+  } catch (err) {
+    console.error('Error conectando Instagram:', err.response?.data || err.message);
+    res.redirect('/?instagram_error=fallo_conexion');
+  }
+});
+
+app.post('/api/instagram/disconnect', requireIdentity, async (req, res) => {
+  if (!isDbConfigured || !req.userId) return res.status(401).json({ error: 'Inicia sesión para desconectar Instagram' });
+  await clearInstagramAccount(req.userId);
+  res.json({ success: true });
+});
+
 // ─── API: Generar caption con Groq Vision ────────────────────────────────────
-app.post('/api/generate', demoLimitGuard, upload.single('image'), async (req, res) => {
+app.post('/api/generate', requireIdentity, demoLimitGuard, upload.single('image'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No se recibio imagen' });
 
     const base64 = req.file.buffer.toString('base64');
     const mimeType = req.file.mimetype;
 
-    const profile = await loadProfile(req.sid);
+    const tenant = getTenant(req);
+    const profile = await loadProfile(tenant);
     const module = getModule(profile.modulo);
     const moduleExtra = module.promptExtra ? module.promptExtra(profile) : '';
     const complianceExtra = module.compliance ? module.compliance(profile) : '';
-    const voiceCtx = await voiceContext(req.sid);
+    const voiceCtx = await voiceContext(tenant);
     const tones = (module.tones && module.tones.length === 3) ? module.tones : getModule('generico').tones;
     const toneLines = tones.map((t, i) => `- Opción ${i + 1}: ${t.angle}`).join('\n');
 
@@ -383,7 +610,9 @@ NO pongas placeholders como [nombre], [empresa] ni texto fuera de los separadore
       image: `data:${mimeType};base64,${base64}`,
       status: 'pending'
     };
-    getHistory(req.sid).unshift(entry);
+    const historyList = await getHistory(tenant);
+    historyList.unshift(entry);
+    await saveHistory(tenant, historyList);
 
     res.json({ captions: captionList, id: entry.id, tones: tones.map(t => t.label) });
   } catch (err) {
@@ -396,11 +625,12 @@ NO pongas placeholders como [nombre], [empresa] ni texto fuera de los separadore
 // Acepta hasta 5 imágenes en el campo "images". Si solo llega 1, se usa la
 // misma foto para los 5 días (una única llamada a Groq, más rápido). Si llegan
 // varias, cada día usa su propia foto (una llamada a Groq por día, en paralelo).
-app.post('/api/generate-week', demoLimitGuard, upload.array('images', 5), async (req, res) => {
+app.post('/api/generate-week', requireIdentity, demoLimitGuard, upload.array('images', 5), async (req, res) => {
   try {
     if (!req.files || !req.files.length) return res.status(400).json({ error: 'No se recibio imagen' });
 
-    const profile = await loadProfile(req.sid);
+    const tenant = getTenant(req);
+    const profile = await loadProfile(tenant);
     const module = getModule(profile.modulo);
     const angles = (module.calendarAngles && module.calendarAngles.length === 5)
       ? module.calendarAngles
@@ -412,7 +642,7 @@ app.post('/api/generate-week', demoLimitGuard, upload.array('images', 5), async 
       const mimeType = file.mimetype;
       const moduleExtra = module.promptExtra ? module.promptExtra(profile) : '';
       const complianceExtra = module.compliance ? module.compliance(profile) : '';
-      const voiceCtx = await voiceContext(req.sid);
+      const voiceCtx = await voiceContext(tenant);
       const angleBlocks = angles.map(a => `===${a.day}===\n[ángulo ${a.angle}]`).join('\n');
 
       const payload = {
@@ -465,7 +695,7 @@ NO pongas placeholders. NO incluyas texto fuera de los separadores. Máximo 1500
       const file = req.files[i % req.files.length];
       const base64 = file.buffer.toString('base64');
       const mimeType = file.mimetype;
-      const caption = await generateCaptionForAngle(base64, mimeType, profile, module, a, req.sid);
+      const caption = await generateCaptionForAngle(base64, mimeType, profile, module, a, tenant);
       week.push({ day: a.day, angle: a.label, caption, image: `data:${mimeType};base64,${base64}` });
     }
 
@@ -488,7 +718,7 @@ NO pongas placeholders. NO incluyas texto fuera de los separadores. Máximo 1500
 // mayúsculas aquí también para no depender de que coincida el casing exacto.
 const DAY_OFFSET = { 'LUNES': 0, 'MARTES': 1, 'MIÉRCOLES': 2, 'JUEVES': 3, 'VIERNES': 4 };
 
-app.post('/api/schedule-week', async (req, res) => {
+app.post('/api/schedule-week', requireIdentity, async (req, res) => {
   try {
     const { days, startDate, time } = req.body;
     if (!Array.isArray(days) || !days.length) return res.status(400).json({ error: 'Faltan los días de la semana' });
@@ -498,7 +728,7 @@ app.post('/api/schedule-week', async (req, res) => {
     }
 
     const [h, m] = time.split(':').map(Number);
-    const posts = await loadScheduled(req.sid);
+    const posts = await loadScheduled(getTenant(req));
     const created = [];
 
     for (const d of days) {
@@ -527,7 +757,7 @@ app.post('/api/schedule-week', async (req, res) => {
       created.push(entry);
     }
 
-    await saveScheduled(req.sid, posts);
+    await saveScheduled(getTenant(req), posts);
     res.json({ success: true, created });
   } catch (err) {
     console.error('Error en /api/schedule-week:', err.message);
@@ -535,13 +765,13 @@ app.post('/api/schedule-week', async (req, res) => {
   }
 });
 
-app.get('/api/scheduled', async (req, res) => {
-  const posts = await loadScheduled(req.sid);
+app.get('/api/scheduled', requireIdentity, async (req, res) => {
+  const posts = await loadScheduled(getTenant(req));
   res.json(posts.slice().sort((a, b) => new Date(a.scheduledFor) - new Date(b.scheduledFor)));
 });
 
 // ─── API: Regenerar el caption de un día concreto (semana) con otra imagen ──
-app.post('/api/generate-day', demoLimitGuard, upload.single('image'), async (req, res) => {
+app.post('/api/generate-day', requireIdentity, demoLimitGuard, upload.single('image'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No se recibio imagen' });
     const { day } = req.body;
@@ -549,14 +779,15 @@ app.post('/api/generate-day', demoLimitGuard, upload.single('image'), async (req
     const base64 = req.file.buffer.toString('base64');
     const mimeType = req.file.mimetype;
 
-    const profile = await loadProfile(req.sid);
+    const tenant = getTenant(req);
+    const profile = await loadProfile(tenant);
     const module = getModule(profile.modulo);
     const angles = (module.calendarAngles && module.calendarAngles.length === 5)
       ? module.calendarAngles
       : getModule('generico').calendarAngles;
     const angleDef = angles.find(a => a.day === day) || angles[0];
 
-    const caption = await generateCaptionForAngle(base64, mimeType, profile, module, angleDef, req.sid);
+    const caption = await generateCaptionForAngle(base64, mimeType, profile, module, angleDef, tenant);
     res.json({ caption });
   } catch (err) {
     console.error('Error en /api/generate-day:', err.response?.data || err.message);
@@ -569,14 +800,14 @@ app.post('/api/generate-day', demoLimitGuard, upload.single('image'), async (req
 // estilo visual del módulo activo y el contexto de marca del perfil. Devuelve
 // una imagen lista para usarse exactamente igual que una foto subida (el
 // frontend la reinyecta en el mismo flujo de /api/generate o /api/generate-week).
-app.post('/api/generate-image', demoLimitGuard, async (req, res) => {
+app.post('/api/generate-image', requireIdentity, demoLimitGuard, async (req, res) => {
   try {
     const { description } = req.body;
     if (!description || !description.trim()) {
       return res.status(400).json({ error: 'Falta describir qué imagen generar' });
     }
 
-    const profile = await loadProfile(req.sid);
+    const profile = await loadProfile(getTenant(req));
     const module = getModule(profile.modulo);
     const imageStyle = module.imageStyle || getModule('generico').imageStyle;
 
@@ -597,11 +828,13 @@ app.post('/api/generate-image', demoLimitGuard, async (req, res) => {
 });
 
 // ─── API: Publicar en Instagram ──────────────────────────────────────────────
-app.post('/api/publish', async (req, res) => {
+app.post('/api/publish', requireIdentity, async (req, res) => {
   const { id, caption, originalCaption, imageBase64 } = req.body;
+  const tenant = getTenant(req);
 
   // Actualizar historial
-  const entry = getHistory(req.sid).find(h => h.id === id);
+  const historyList = await getHistory(tenant);
+  const entry = historyList.find(h => h.id === id);
   // Fuente de la imagen real: preferimos la que el servidor guardó en /api/generate
   // (un data URI base64 fiable) en vez de la que manda el cliente en imageBase64,
   // que en el flujo actual del frontend es un blob: URL local del navegador —
@@ -616,43 +849,56 @@ app.post('/api/publish', async (req, res) => {
   // Guardar par para aprendizaje de voz (solo si el usuario editó)
   let voiceExamples = 0;
   if (originalCaption && caption && originalCaption.trim() !== caption.trim()) {
-    const voice = await loadVoice(req.sid);
+    const voice = await loadVoice(tenant);
     voice.examples.push({ original: originalCaption.trim(), final: caption.trim(), date: new Date().toISOString() });
-    await saveVoice(req.sid, voice);
+    await saveVoice(tenant, voice);
     voiceExamples = voice.examples.length;
 
     // Analizar patrones a partir de 3 ejemplos (en background, sin bloquear respuesta)
     if (voiceExamples >= 3) {
       analyzeVoice(voice.examples).then(async patterns => {
-        const v = await loadVoice(req.sid);
+        const v = await loadVoice(tenant);
         v.patterns = patterns;
         v.lastAnalyzed = new Date().toISOString();
-        await saveVoice(req.sid, v);
+        await saveVoice(tenant, v);
         console.log(`Voz actualizada con ${voiceExamples} ejemplos`);
       }).catch(err => console.error('Error analizando voz:', err.message));
     }
   }
 
   try {
-    const result = await publishToMeta(sourceImage, caption);
+    let credentials = null;
+    if (isDbConfigured && req.userId) {
+      const account = await getInstagramAccount(req.userId);
+      if (account?.instagram_access_token) {
+        credentials = { accessToken: account.instagram_access_token, accountId: account.instagram_user_id };
+      }
+    }
+    const result = await publishToMeta(sourceImage, caption, credentials);
     if (result.demo) {
       if (entry) entry.status = 'published_demo';
+      await saveHistory(tenant, historyList);
       return res.json({ success: true, demo: true, voiceExamples, message: result.message + ' El caption se aprobó correctamente.' });
     }
     if (entry) entry.status = 'published';
+    await saveHistory(tenant, historyList);
     res.json({ success: true, containerId: result.containerId });
   } catch (err) {
     if (entry) entry.status = 'error';
+    await saveHistory(tenant, historyList);
     console.error('Error en /api/publish:', err.response?.data || err.message);
     res.status(500).json({ error: 'Error publicando en Instagram', detail: err.message });
   }
 });
 
 // ─── API: Rechazar ───────────────────────────────────────────────────────────
-app.post('/api/reject', (req, res) => {
+app.post('/api/reject', requireIdentity, async (req, res) => {
   const { id } = req.body;
-  const entry = getHistory(req.sid).find(h => h.id === id);
+  const tenant = getTenant(req);
+  const historyList = await getHistory(tenant);
+  const entry = historyList.find(h => h.id === id);
   if (entry) entry.status = 'rejected';
+  await saveHistory(tenant, historyList);
   res.json({ success: true });
 });
 
@@ -660,11 +906,11 @@ app.post('/api/reject', (req, res) => {
 app.get('/api/modules', (req, res) => res.json(listModules()));
 
 // ─── API: Perfil de marca ────────────────────────────────────────────────────
-app.get('/api/profile', async (req, res) => res.json(await loadProfile(req.sid)));
+app.get('/api/profile', requireIdentity, async (req, res) => res.json(await loadProfile(getTenant(req))));
 
-app.post('/api/profile', express.json(), async (req, res) => {
+app.post('/api/profile', requireIdentity, express.json(), async (req, res) => {
   try {
-    await saveProfile(req.sid, req.body);
+    await saveProfile(getTenant(req), req.body);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'No se pudo guardar el perfil' });
@@ -700,10 +946,20 @@ async function saveReviews(reviews) {
 // en memoria) para que un post programado sobreviva a un reinicio del server.
 const SCHEDULED_PATH = path.join(__file, 'scheduled-posts.json');
 
-async function loadScheduled(sid) {
-  if (sid) {
-    if (!sessionScheduled.has(sid)) sessionScheduled.set(sid, []);
-    return sessionScheduled.get(sid);
+async function loadScheduled(tenant) {
+  if (tenant.type === 'demo') {
+    if (!sessionScheduled.has(tenant.id)) sessionScheduled.set(tenant.id, []);
+    return sessionScheduled.get(tenant.id);
+  }
+  if (tenant.type === 'user') {
+    if (redis) {
+      try {
+        const data = await redis.get(`scheduled-posts:user:${tenant.id}`);
+        if (data) return data;
+      } catch (err) { console.error('Redis error (loadScheduled user), usando fallback local:', err.message); }
+    }
+    try { return JSON.parse(fs.readFileSync(userDataPath(tenant.id, 'scheduled-posts.json'), 'utf8')); }
+    catch { return []; }
   }
   if (redis) {
     try {
@@ -715,8 +971,16 @@ async function loadScheduled(sid) {
   catch { return []; }
 }
 
-async function saveScheduled(sid, posts) {
-  if (sid) { sessionScheduled.set(sid, posts); return; }
+async function saveScheduled(tenant, posts) {
+  if (tenant.type === 'demo') { sessionScheduled.set(tenant.id, posts); return; }
+  if (tenant.type === 'user') {
+    if (redis) {
+      try { await redis.set(`scheduled-posts:user:${tenant.id}`, posts); return; }
+      catch (err) { console.error('Redis error (saveScheduled user), usando fallback local:', err.message); }
+    }
+    writeUserFile(tenant.id, 'scheduled-posts.json', posts);
+    return;
+  }
   if (redis) {
     try { await redis.set('scheduled-posts', posts); return; }
     catch (err) { console.error('Redis error (saveScheduled), usando fallback local:', err.message); }
@@ -725,12 +989,19 @@ async function saveScheduled(sid, posts) {
 }
 
 // Misma lógica que usaba /api/publish, extraída para poder reutilizarla desde
-// el scheduler automático. Recibe un data URI (imagen) y el caption; devuelve
-// { demo: true } si Meta no está configurada, o { success: true, containerId }
-// si publicó de verdad. Lanza si algo falla.
-async function publishToMeta(sourceImage, caption) {
-  if (!process.env.META_ACCESS_TOKEN || !process.env.META_INSTAGRAM_ACCOUNT_ID) {
-    return { demo: true, message: 'Modo demo: Meta Graph API no configurada.' };
+// el scheduler automático. Recibe un data URI (imagen), el caption, y
+// opcionalmente { accessToken, accountId } de la cuenta de Instagram del
+// usuario dueño del post (ver getInstagramAccount). Si no se pasan, cae en
+// META_ACCESS_TOKEN/META_INSTAGRAM_ACCOUNT_ID del .env — el modo "cliente
+// único" de siempre, con una sola cuenta compartida por todo el despliegue.
+// Devuelve { demo: true } si no hay ninguna cuenta configurada, o
+// { success: true, containerId } si publicó de verdad. Lanza si algo falla.
+async function publishToMeta(sourceImage, caption, credentials) {
+  const accessToken = credentials?.accessToken || process.env.META_ACCESS_TOKEN;
+  const accountId = credentials?.accountId || process.env.META_INSTAGRAM_ACCOUNT_ID;
+
+  if (!accessToken || !accountId) {
+    return { demo: true, message: 'Modo demo: no hay ninguna cuenta de Instagram conectada.' };
   }
   if (!process.env.PUBLIC_URL) {
     throw new Error('Falta PUBLIC_URL en .env — Meta exige una URL pública de la imagen para publicar (no acepta base64 ni funciona con localhost). Define PUBLIC_URL con la URL pública de tu despliegue.');
@@ -745,15 +1016,19 @@ async function publishToMeta(sourceImage, caption) {
   fs.writeFileSync(filepath, Buffer.from(data, 'base64'));
   const imageUrl = `${process.env.PUBLIC_URL.replace(/\/$/, '')}/tmp-uploads/${filename}`;
 
+  // Usamos graph.instagram.com (no graph.facebook.com) porque las cuentas se
+  // conectan vía "Instagram API with Instagram Login" — el flujo de Meta que
+  // no requiere una Página de Facebook vinculada. El token (prefijo IGAA) y
+  // el ID de cuenta (user_id de graph.instagram.com/me) son de ese flujo.
   const containerRes = await axios.post(
-    `https://graph.facebook.com/v19.0/${process.env.META_INSTAGRAM_ACCOUNT_ID}/media`,
-    { image_url: imageUrl, caption, access_token: process.env.META_ACCESS_TOKEN }
+    `https://graph.instagram.com/v21.0/${accountId}/media`,
+    { image_url: imageUrl, caption, access_token: accessToken }
   );
   const containerId = containerRes.data.id;
 
   await axios.post(
-    `https://graph.facebook.com/v19.0/${process.env.META_INSTAGRAM_ACCOUNT_ID}/media_publish`,
-    { creation_id: containerId, access_token: process.env.META_ACCESS_TOKEN }
+    `https://graph.instagram.com/v21.0/${accountId}/media_publish`,
+    { creation_id: containerId, access_token: accessToken }
   );
 
   setTimeout(() => fs.unlink(filepath, () => {}), 5 * 60 * 1000);
@@ -876,14 +1151,15 @@ Basándote en patrones reales de engagement en Instagram para este sector, respo
 });
 
 // ─── API: Voz aprendida ──────────────────────────────────────────────────────
-app.get('/api/voice', async (req, res) => {
-  const { examples, patterns, lastAnalyzed } = await loadVoice(req.sid);
+app.get('/api/voice', requireIdentity, async (req, res) => {
+  const { examples, patterns, lastAnalyzed } = await loadVoice(getTenant(req));
   res.json({ count: examples.length, patterns, lastAnalyzed });
 });
 
 // ─── API: Historial ──────────────────────────────────────────────────────────
-app.get('/api/history', (req, res) => {
-  res.json(getHistory(req.sid).map(h => ({
+app.get('/api/history', requireIdentity, async (req, res) => {
+  const list = await getHistory(getTenant(req));
+  res.json(list.map(h => ({
     id: h.id,
     date: h.date,
     caption: h.caption,
@@ -926,14 +1202,26 @@ app.use((err, req, res, next) => {
 // toque nada, este server tiene que estar desplegado 24/7 (Hostinger, etc.).
 let schedulerRunning = false;
 
-async function publishDuePosts(sid, posts) {
+async function publishDuePosts(tenant, posts) {
   const now = new Date();
   let changed = false;
+
+  // Si son posts de un usuario registrado, publicar con SU cuenta de
+  // Instagram conectada (no la global del .env) — una sola consulta por
+  // tenant, reutilizada para todos sus posts vencidos en este tick.
+  let credentials = null;
+  if (tenant.type === 'user') {
+    const account = await getInstagramAccount(tenant.id);
+    if (account?.instagram_access_token) {
+      credentials = { accessToken: account.instagram_access_token, accountId: account.instagram_user_id };
+    }
+  }
+
   for (const post of posts) {
     if (post.status !== 'scheduled') continue;
     if (new Date(post.scheduledFor) > now) continue;
     try {
-      const result = await publishToMeta(post.image, post.caption);
+      const result = await publishToMeta(post.image, post.caption, credentials);
       post.status = result.demo ? 'published_demo' : 'published';
       if (result.containerId) post.containerId = result.containerId;
       console.log(`✅ Post programado publicado (${post.day}, ${result.demo ? 'demo' : 'real'}): id ${post.id}`);
@@ -944,18 +1232,28 @@ async function publishDuePosts(sid, posts) {
     }
     changed = true;
   }
-  if (changed) await saveScheduled(sid, posts);
+  if (changed) await saveScheduled(tenant, posts);
 }
 
 async function runScheduler() {
   if (schedulerRunning) return; // evita solapes si una publicación tarda más de 1 minuto
   schedulerRunning = true;
   try {
-    // Cliente real (o desarrollo local sin DEMO_MODE): posts compartidos.
-    await publishDuePosts(null, await loadScheduled(null));
+    // Cliente único (modo legado, sin DATABASE_URL): posts compartidos.
+    const shared = { type: 'shared' };
+    await publishDuePosts(shared, await loadScheduled(shared));
     // Visitantes de la demo pública: cada uno tiene los suyos en memoria.
     for (const [sid, posts] of sessionScheduled.entries()) {
-      await publishDuePosts(sid, posts);
+      await publishDuePosts({ type: 'demo', id: sid }, posts);
+    }
+    // Usuarios registrados (solo si DATABASE_URL está configurada): cada uno
+    // tiene sus posts en Redis/archivo, namespaced por su id.
+    if (isDbConfigured) {
+      const userIds = await listUserIds();
+      for (const id of userIds) {
+        const tenant = { type: 'user', id };
+        await publishDuePosts(tenant, await loadScheduled(tenant));
+      }
     }
   } catch (err) {
     console.error('Error en runScheduler:', err.message);
@@ -967,7 +1265,9 @@ async function runScheduler() {
 app.listen(PORT, () => {
   console.log(`AutoPost CM corriendo en http://localhost:${PORT}`);
   if (!IS_PROD) console.log(`Frontend dev: http://localhost:5173`);
-  console.log(process.env.APP_PASSWORD ? 'Autenticación: ACTIVADA (APP_PASSWORD definido)' : 'Autenticación: desactivada (define APP_PASSWORD para activarla)');
+  console.log(isDbConfigured
+    ? 'Cuentas de usuario: ACTIVADAS (DATABASE_URL definido) — modo multi-tenant, APP_PASSWORD ignorado'
+    : (process.env.APP_PASSWORD ? 'Autenticación: ACTIVADA (APP_PASSWORD definido, modo legado)' : 'Autenticación: desactivada (define APP_PASSWORD o DATABASE_URL para activarla)'));
   console.log(redis ? 'Persistencia: Upstash Redis (sobrevive a redeploys)' : 'Persistencia: archivos locales (define UPSTASH_REDIS_REST_URL/TOKEN para producción)');
   console.log((process.env.META_ACCESS_TOKEN && process.env.META_INSTAGRAM_ACCOUNT_ID) ? 'Publicación en Instagram: configurada' : 'Publicación en Instagram: modo demo (define META_ACCESS_TOKEN/META_INSTAGRAM_ACCOUNT_ID + PUBLIC_URL para publicar de verdad)');
   setInterval(runScheduler, 60 * 1000);

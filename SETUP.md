@@ -44,12 +44,34 @@ Abre http://localhost:5173 en el navegador.
 | DEMO_DAILY_LIMIT | SOLO para el despliegue de demo pública. Nº de generaciones gratis por IP y día (ej. `3`). Al agotarse, la app muestra un aviso con enlace a `/matriz.html` para pedir la prueba completa. No definir en un despliegue de cliente real — ahí debe ser ilimitado |
 | POLLINATIONS_TOKEN | Token de Pollinations.AI (auth.pollinations.ai), opcional — "Generar imagen con IA" funciona sin esto (gratis, con marca de agua pequeña). Solo hace falta si quieres quitarla o subir el límite de peticiones |
 | UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN | Recomendable en cualquier despliegue fuera de tu ordenador (Railway, Hostinger...). Sin esto, el perfil de marca, la voz aprendida, las reseñas y los leads se guardan en archivos locales que la mayoría de hostings borran en cada redeploy. Con esto definido, viven en Redis (upstash.com, plan Free gratuito) y sobreviven a los redeploys pase lo que pase con el disco del hosting. Sin esto, sigue funcionando igual en local |
+| DATABASE_URL | Opcional — activa cuentas de usuario reales (ver sección "Cuentas de usuario" más abajo). Connection string de Postgres, recomendado neon.tech (plan Free) |
+| JWT_SECRET | Obligatoria SOLO si defines DATABASE_URL — secreto para firmar las sesiones de los usuarios. Genera uno con `openssl rand -hex 32` |
 
 Sin META_ACCESS_TOKEN, la app funciona en modo demo: genera captions pero no publica en Instagram. Si defines META_ACCESS_TOKEN, define también PUBLIC_URL o la publicación real fallará.
 
 "Generar imagen con IA" es gratis de serie (Pollinations.AI, sin API key ni tarjeta) — no necesitas configurar nada para usarla.
 
-Sin APP_PASSWORD, la app queda abierta a cualquiera que tenga la URL — bien para desarrollo local, mal para una URL pública. Al desplegar en Railway, define siempre APP_PASSWORD.
+Sin APP_PASSWORD, la app queda abierta a cualquiera que tenga la URL — bien para desarrollo local, mal para una URL pública. Al desplegar en Railway, define siempre APP_PASSWORD (a menos que actives DATABASE_URL, ver abajo).
+
+## Cuentas de usuario (multi-tenant, opcional)
+
+Por defecto la app funciona como "cliente único": todo el mundo que entra (con o sin APP_PASSWORD) ve y edita el mismo perfil/historial/programados. Si defines `DATABASE_URL`, la app cambia de modo: activa registro/login real (email + contraseña) y **cada usuario tiene su propio perfil de marca, voz aprendida, historial y posts programados, aislados de los demás**. `APP_PASSWORD` deja de usarse en ese momento — las rutas de datos exigen sesión iniciada (o cookie de demo pública, si `DEMO_DAILY_LIMIT` también está activa).
+
+**Importante**: no definas `DATABASE_URL` en un despliegue de cliente único que ya está en marcha con `APP_PASSWORD` (ej. el piloto real) sin querer convertirlo en multi-tenant — dejaría de aceptar peticiones sin una cuenta.
+
+Pasos para activarlo (recomendamos [neon.tech](https://neon.tech), plan Free, Postgres puro con autosuspend — funciona igual con Supabase u otro Postgres si lo prefieres):
+
+1. Crea un proyecto en Neon y copia el connection string (botón "Connection string" del dashboard).
+2. Pégalo en `.env` como `DATABASE_URL=...`.
+3. Genera un secreto y ponlo en `JWT_SECRET` (ej. `openssl rand -hex 32`).
+4. Ejecuta `npm run migrate` una vez — crea la tabla `users`.
+5. Arranca la app normalmente (`npm run dev` / `npm start`). El log de arranque confirma "Cuentas de usuario: ACTIVADAS".
+
+Nota: en el plan Free, Neon "duerme" tras un rato sin uso — la primera petición después de inactividad tarda ~1s más de lo normal mientras la base despierta. No es un fallo.
+
+Esta fase solo mete `users` (email, contraseña hasheada, plan) en Postgres — el perfil, la voz, el historial y los programados de cada usuario siguen viviendo en Redis (o archivo local en `server/data/users/<id>/` si no hay Redis configurado), namespaced por su id, igual que hoy para el cliente único. Es una decisión consciente para esta fase: si el volumen de usuarios/posts lo justifica más adelante, esos datos pueden migrar a tablas relacionales.
+
+Todavía no hay pantalla de login/registro en la app — se usa vía API (`POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`), pensada para probarse con curl/Postman mientras se construye la UI en una fase posterior.
 
 ## Deploy en la nube (Railway)
 
