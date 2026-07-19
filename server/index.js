@@ -10,6 +10,7 @@ import 'dotenv/config';
 import { Redis } from '@upstash/redis';
 import { getModule, listModules } from './modules/index.js';
 import { generateImage } from './services/imageGen.js';
+import { notifyTrialRequest } from './services/email.js';
 import bcrypt from 'bcryptjs';
 import { isDbConfigured } from './db.js';
 import { createUser, findUserByEmail, listUserIds, saveInstagramAccount, getInstagramAccount, clearInstagramAccount } from './auth/users.js';
@@ -1114,6 +1115,7 @@ app.post('/api/trial-request', async (req, res) => {
   };
   requests.unshift(entry);
   await saveTrialRequests(requests);
+  notifyTrialRequest(entry); // en background, no bloquea la respuesta
   res.json({ success: true });
 });
 
