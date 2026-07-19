@@ -1,0 +1,12 @@
+.scheduled-when {
+  font-size: 12px;
+  color: var(--text2);
+  text-transform: capitalize;
+}
+
+.scheduled-error-msg {
+  font-size: 11px;
+  color: var(--danger);
+  margin-top: 2px;
+  line-height: 1.4;
+}

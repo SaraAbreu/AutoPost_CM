@@ -53,6 +53,7 @@ const demoUsage = new Map();        // "ip|YYYY-MM-DD" -> nº de usos ese día
 const sessionProfiles = new Map();  // sid -> perfil de esa sesión
 const sessionVoices = new Map();    // sid -> { examples, patterns, lastAnalyzed }
 const sessionHistories = new Map(); // sid -> historial de esa sesión
+const sessionScheduled = new Map(); // sid -> posts programados de esa sesión (solo demo)
 
 function parseCookies(req) {
   const header = req.headers.cookie;
@@ -281,7 +282,13 @@ const upload = multer({
 });
 
 app.use(cors());
-app.use(express.json());
+// Límite alto a propósito: /api/schedule-week manda las 5 fotos de la semana
+// como base64 dentro del JSON (hasta 20MB cada una, según el límite de multer
+// de arriba, más el ~33% que añade la codificación base64). El límite por
+// defecto de express.json() es 100kb — con eso, cualquier POST con imágenes
+// fallaba con "PayloadTooLargeError" y el navegador veía una página HTML de
+// error en vez de JSON (de ahí el "Unexpected token '<'" al parsear).
+app.use(express.json({ limit: '100mb' }));
 app.use('/tmp-uploads', express.static(TMP_UPLOADS_DIR));
 app.use('/api', sessionMiddleware); // asigna/lee la cookie demo_sid (solo si DEMO_MODE)
 
@@ -469,6 +476,70 @@ NO pongas placeholders. NO incluyas texto fuera de los separadores. Máximo 1500
   }
 });
 
+// ─── API: Programar la semana para que se publique sola ────────────────────
+// Recibe los 5 días (con caption e imagen ya en data URI — el frontend
+// convierte cualquier imagen personalizada a base64 antes de mandarla, no
+// vale un blob: URL local) más una fecha de inicio (el lunes) y una hora.
+// Calcula la fecha/hora exacta de cada día y los deja en estado "scheduled".
+// Un intervalo en segundo plano (ver runScheduler más abajo) los publica de
+// verdad cuando llega su momento — no hace falta que nadie entre a la app.
+// Los módulos (server/modules/*.js) usan el día en MAYÚSCULAS ("LUNES",
+// "MIÉRCOLES"...) en el campo calendarAngles[].day — normalizamos a
+// mayúsculas aquí también para no depender de que coincida el casing exacto.
+const DAY_OFFSET = { 'LUNES': 0, 'MARTES': 1, 'MIÉRCOLES': 2, 'JUEVES': 3, 'VIERNES': 4 };
+
+app.post('/api/schedule-week', async (req, res) => {
+  try {
+    const { days, startDate, time } = req.body;
+    if (!Array.isArray(days) || !days.length) return res.status(400).json({ error: 'Faltan los días de la semana' });
+    if (!startDate || !time) return res.status(400).json({ error: 'Falta la fecha de inicio (lunes) o la hora' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{2}:\d{2}$/.test(time)) {
+      return res.status(400).json({ error: 'Formato de fecha/hora inválido' });
+    }
+
+    const [h, m] = time.split(':').map(Number);
+    const posts = await loadScheduled(req.sid);
+    const created = [];
+
+    for (const d of days) {
+      if (!d.image || !/^data:.+;base64,/.test(d.image)) {
+        return res.status(400).json({ error: `Falta la imagen del ${d.day} en formato válido` });
+      }
+      const offset = DAY_OFFSET[String(d.day || '').toUpperCase()];
+      if (offset === undefined) {
+        return res.status(400).json({ error: `Día no reconocido: "${d.day}"` });
+      }
+      const scheduledFor = new Date(`${startDate}T00:00:00`);
+      scheduledFor.setDate(scheduledFor.getDate() + offset);
+      scheduledFor.setHours(h, m, 0, 0);
+
+      const entry = {
+        id: Date.now() + offset, // offset evita colisiones al crear los 5 casi a la vez
+        day: d.day,
+        angle: d.angle || '',
+        caption: d.caption,
+        image: d.image,
+        scheduledFor: scheduledFor.toISOString(),
+        status: 'scheduled',
+        createdAt: new Date().toISOString()
+      };
+      posts.push(entry);
+      created.push(entry);
+    }
+
+    await saveScheduled(req.sid, posts);
+    res.json({ success: true, created });
+  } catch (err) {
+    console.error('Error en /api/schedule-week:', err.message);
+    res.status(500).json({ error: 'No se pudo programar la semana', detail: err.message });
+  }
+});
+
+app.get('/api/scheduled', async (req, res) => {
+  const posts = await loadScheduled(req.sid);
+  res.json(posts.slice().sort((a, b) => new Date(a.scheduledFor) - new Date(b.scheduledFor)));
+});
+
 // ─── API: Regenerar el caption de un día concreto (semana) con otra imagen ──
 app.post('/api/generate-day', demoLimitGuard, upload.single('image'), async (req, res) => {
   try {
@@ -563,55 +634,13 @@ app.post('/api/publish', async (req, res) => {
   }
 
   try {
-    if (!process.env.META_ACCESS_TOKEN || !process.env.META_INSTAGRAM_ACCOUNT_ID) {
+    const result = await publishToMeta(sourceImage, caption);
+    if (result.demo) {
       if (entry) entry.status = 'published_demo';
-      return res.json({
-        success: true,
-        demo: true,
-        voiceExamples,
-        message: 'Modo demo: Meta Graph API no configurada. El caption se aprobó correctamente.'
-      });
+      return res.json({ success: true, demo: true, voiceExamples, message: result.message + ' El caption se aprobó correctamente.' });
     }
-
-    if (!process.env.PUBLIC_URL) {
-      throw new Error('Falta PUBLIC_URL en .env — Meta exige una URL pública de la imagen para publicar (no acepta base64 ni funciona con localhost). Define PUBLIC_URL con la URL pública de tu despliegue (ej. Railway).');
-    }
-
-    // Paso 0: Meta necesita descargar la imagen desde una URL pública, no la
-    // acepta como base64. La escribimos a un archivo temporal servido de forma
-    // estática y construimos su URL pública a partir de PUBLIC_URL.
-    const match = /^data:(.+);base64,(.+)$/.exec(sourceImage || '');
-    if (!match) throw new Error('No se encontró una imagen válida para publicar');
-    const [, mime, data] = match;
-    const ext = (mime.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
-    const filename = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
-    const filepath = path.join(TMP_UPLOADS_DIR, filename);
-    fs.writeFileSync(filepath, Buffer.from(data, 'base64'));
-    const imageUrl = `${process.env.PUBLIC_URL.replace(/\/$/, '')}/tmp-uploads/${filename}`;
-
-    // Paso 1: Subir imagen como contenedor
-    const containerRes = await axios.post(
-      `https://graph.facebook.com/v19.0/${process.env.META_INSTAGRAM_ACCOUNT_ID}/media`,
-      {
-        image_url: imageUrl,
-        caption,
-        access_token: process.env.META_ACCESS_TOKEN
-      }
-    );
-    const containerId = containerRes.data.id;
-
-    // Paso 2: Publicar contenedor
-    await axios.post(
-      `https://graph.facebook.com/v19.0/${process.env.META_INSTAGRAM_ACCOUNT_ID}/media_publish`,
-      { creation_id: containerId, access_token: process.env.META_ACCESS_TOKEN }
-    );
-
-    // Limpieza: Meta ya debería haber descargado la imagen a estas alturas;
-    // le damos un margen prudencial antes de borrar el archivo temporal.
-    setTimeout(() => fs.unlink(filepath, () => {}), 5 * 60 * 1000);
-
     if (entry) entry.status = 'published';
-    res.json({ success: true, containerId });
+    res.json({ success: true, containerId: result.containerId });
   } catch (err) {
     if (entry) entry.status = 'error';
     console.error('Error en /api/publish:', err.response?.data || err.message);
@@ -662,6 +691,73 @@ async function saveReviews(reviews) {
     catch (err) { console.error('Redis error (saveReviews), usando fallback local:', err.message); }
   }
   fs.writeFileSync(REVIEWS_PATH, JSON.stringify(reviews, null, 2), 'utf8');
+}
+
+// ─── Posts programados ("Semana completa" → publicación automática) ─────────
+// Igual que profile/voice: sid presente (demo pública) -> solo en memoria de
+// esa sesión; sid null (cliente real) -> Redis si hay credenciales, si no
+// archivo local. Se guarda aparte del "history" normal (que es efímero, solo
+// en memoria) para que un post programado sobreviva a un reinicio del server.
+const SCHEDULED_PATH = path.join(__file, 'scheduled-posts.json');
+
+async function loadScheduled(sid) {
+  if (sid) {
+    if (!sessionScheduled.has(sid)) sessionScheduled.set(sid, []);
+    return sessionScheduled.get(sid);
+  }
+  if (redis) {
+    try {
+      const data = await redis.get('scheduled-posts');
+      if (data) return data;
+    } catch (err) { console.error('Redis error (loadScheduled), usando fallback local:', err.message); }
+  }
+  try { return JSON.parse(fs.readFileSync(SCHEDULED_PATH, 'utf8')); }
+  catch { return []; }
+}
+
+async function saveScheduled(sid, posts) {
+  if (sid) { sessionScheduled.set(sid, posts); return; }
+  if (redis) {
+    try { await redis.set('scheduled-posts', posts); return; }
+    catch (err) { console.error('Redis error (saveScheduled), usando fallback local:', err.message); }
+  }
+  fs.writeFileSync(SCHEDULED_PATH, JSON.stringify(posts, null, 2), 'utf8');
+}
+
+// Misma lógica que usaba /api/publish, extraída para poder reutilizarla desde
+// el scheduler automático. Recibe un data URI (imagen) y el caption; devuelve
+// { demo: true } si Meta no está configurada, o { success: true, containerId }
+// si publicó de verdad. Lanza si algo falla.
+async function publishToMeta(sourceImage, caption) {
+  if (!process.env.META_ACCESS_TOKEN || !process.env.META_INSTAGRAM_ACCOUNT_ID) {
+    return { demo: true, message: 'Modo demo: Meta Graph API no configurada.' };
+  }
+  if (!process.env.PUBLIC_URL) {
+    throw new Error('Falta PUBLIC_URL en .env — Meta exige una URL pública de la imagen para publicar (no acepta base64 ni funciona con localhost). Define PUBLIC_URL con la URL pública de tu despliegue.');
+  }
+
+  const match = /^data:(.+);base64,(.+)$/.exec(sourceImage || '');
+  if (!match) throw new Error('No se encontró una imagen válida para publicar');
+  const [, mime, data] = match;
+  const ext = (mime.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+  const filename = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
+  const filepath = path.join(TMP_UPLOADS_DIR, filename);
+  fs.writeFileSync(filepath, Buffer.from(data, 'base64'));
+  const imageUrl = `${process.env.PUBLIC_URL.replace(/\/$/, '')}/tmp-uploads/${filename}`;
+
+  const containerRes = await axios.post(
+    `https://graph.facebook.com/v19.0/${process.env.META_INSTAGRAM_ACCOUNT_ID}/media`,
+    { image_url: imageUrl, caption, access_token: process.env.META_ACCESS_TOKEN }
+  );
+  const containerId = containerRes.data.id;
+
+  await axios.post(
+    `https://graph.facebook.com/v19.0/${process.env.META_INSTAGRAM_ACCOUNT_ID}/media_publish`,
+    { creation_id: containerId, access_token: process.env.META_ACCESS_TOKEN }
+  );
+
+  setTimeout(() => fs.unlink(filepath, () => {}), 5 * 60 * 1000);
+  return { success: true, containerId };
 }
 
 app.get('/api/reviews', async (req, res) => res.json(await loadReviews()));
@@ -810,9 +906,70 @@ if (IS_PROD) {
   });
 }
 
+// Red de seguridad: si algo falla al parsear el body (JSON roto, o más
+// grande que el límite de arriba) Express por defecto devuelve una página de
+// error en HTML, no JSON — y el frontend, que siempre espera JSON, revienta
+// con un error confuso ("Unexpected token '<'") en vez de mostrar el problema
+// real. Con esto, cualquier error de body-parser vuelve como JSON legible.
+app.use((err, req, res, next) => {
+  if (err && (err.type === 'entity.too.large' || err instanceof SyntaxError)) {
+    console.error('Error de body-parser:', err.message);
+    return res.status(400).json({ error: 'Solicitud inválida o demasiado grande', detail: err.message });
+  }
+  next(err);
+});
+
+// ─── Scheduler: publica en Instagram los posts programados cuya hora llegó ──
+// IMPORTANTE: esto solo funciona mientras este proceso Node siga corriendo.
+// En local (npm run dev en el portátil de Sara) se para si cierra la terminal
+// o el ordenador duerme — para que publique de verdad sola, sin que nadie
+// toque nada, este server tiene que estar desplegado 24/7 (Hostinger, etc.).
+let schedulerRunning = false;
+
+async function publishDuePosts(sid, posts) {
+  const now = new Date();
+  let changed = false;
+  for (const post of posts) {
+    if (post.status !== 'scheduled') continue;
+    if (new Date(post.scheduledFor) > now) continue;
+    try {
+      const result = await publishToMeta(post.image, post.caption);
+      post.status = result.demo ? 'published_demo' : 'published';
+      if (result.containerId) post.containerId = result.containerId;
+      console.log(`✅ Post programado publicado (${post.day}, ${result.demo ? 'demo' : 'real'}): id ${post.id}`);
+    } catch (err) {
+      post.status = 'error';
+      post.error = err.message;
+      console.error(`❌ Error publicando post programado (${post.day}, id ${post.id}):`, err.message);
+    }
+    changed = true;
+  }
+  if (changed) await saveScheduled(sid, posts);
+}
+
+async function runScheduler() {
+  if (schedulerRunning) return; // evita solapes si una publicación tarda más de 1 minuto
+  schedulerRunning = true;
+  try {
+    // Cliente real (o desarrollo local sin DEMO_MODE): posts compartidos.
+    await publishDuePosts(null, await loadScheduled(null));
+    // Visitantes de la demo pública: cada uno tiene los suyos en memoria.
+    for (const [sid, posts] of sessionScheduled.entries()) {
+      await publishDuePosts(sid, posts);
+    }
+  } catch (err) {
+    console.error('Error en runScheduler:', err.message);
+  } finally {
+    schedulerRunning = false;
+  }
+}
+
 app.listen(PORT, () => {
   console.log(`AutoPost CM corriendo en http://localhost:${PORT}`);
   if (!IS_PROD) console.log(`Frontend dev: http://localhost:5173`);
   console.log(process.env.APP_PASSWORD ? 'Autenticación: ACTIVADA (APP_PASSWORD definido)' : 'Autenticación: desactivada (define APP_PASSWORD para activarla)');
   console.log(redis ? 'Persistencia: Upstash Redis (sobrevive a redeploys)' : 'Persistencia: archivos locales (define UPSTASH_REDIS_REST_URL/TOKEN para producción)');
+  console.log((process.env.META_ACCESS_TOKEN && process.env.META_INSTAGRAM_ACCOUNT_ID) ? 'Publicación en Instagram: configurada' : 'Publicación en Instagram: modo demo (define META_ACCESS_TOKEN/META_INSTAGRAM_ACCOUNT_ID + PUBLIC_URL para publicar de verdad)');
+  setInterval(runScheduler, 60 * 1000);
+  runScheduler(); // primera pasada inmediata, no esperar 60s a arrancar
 });

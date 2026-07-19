@@ -2,12 +2,13 @@ import React, { useState } from 'react';
 import Upload from './components/Upload.jsx';
 import CaptionReview from './components/CaptionReview.jsx';
 import History from './components/History.jsx';
+import Scheduled from './components/Scheduled.jsx';
 import Settings from './components/Settings.jsx';
 import WeekView from './components/WeekView.jsx';
 import './App.css';
 
 export default function App() {
-  const [screen, setScreen] = useState('upload'); // upload | review | history | week | settings
+  const [screen, setScreen] = useState('upload'); // upload | review | history | scheduled | week | settings
   const [job, setJob] = useState(null);
   const [weekData, setWeekData] = useState(null);
   const [historyKey, setHistoryKey] = useState(0);
@@ -44,6 +45,12 @@ export default function App() {
             Historial
           </button>
           <button
+            className={`nav-btn ${screen === 'scheduled' ? 'active' : ''}`}
+            onClick={() => setScreen('scheduled')}
+          >
+            Programados
+          </button>
+          <button
             className={`nav-btn nav-settings ${screen === 'settings' ? 'active' : ''}`}
             onClick={() => setScreen('settings')}
             title="Perfil de marca"
@@ -63,6 +70,7 @@ export default function App() {
         {screen === 'week' && weekData && <WeekView data={weekData} onBack={() => setScreen('upload')} />}
         {screen === 'review' && job && <CaptionReview job={job} onDone={onDone} onBack={() => setScreen('upload')} />}
         {screen === 'history' && <History key={historyKey} />}
+        {screen === 'scheduled' && <Scheduled />}
         {screen === 'settings' && <Settings />}
       </main>
     </div>

@@ -10,6 +10,75 @@
 .week-header h1 { font-size: 26px; font-weight: 800; letter-spacing: -0.03em; margin-bottom: 4px; }
 .week-header p { color: var(--text2); font-size: 13px; }
 
+/* ── Programar semana completa ── */
+.schedule-panel {
+  padding: 18px 20px;
+  margin-bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.schedule-panel-title { font-size: 15px; font-weight: 700; }
+
+.schedule-panel-sub {
+  font-size: 12px;
+  color: var(--text2);
+  line-height: 1.6;
+  margin-top: 4px;
+}
+
+.schedule-panel-fields {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.schedule-field { display: flex; flex-direction: column; gap: 6px; }
+
+.schedule-field label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text2);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.schedule-field input {
+  background: var(--bg3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: 9px 12px;
+  font-size: 14px;
+  font-family: inherit;
+}
+
+.schedule-field input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.schedule-result {
+  font-size: 13px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  line-height: 1.5;
+}
+
+.schedule-result.ok {
+  background: rgba(16,185,129,0.12);
+  color: var(--success);
+  border: 1px solid rgba(16,185,129,0.2);
+}
+
+.schedule-result.error {
+  background: rgba(244,63,94,0.12);
+  color: var(--danger);
+  border: 1px solid rgba(244,63,94,0.2);
+}
+
 /* ── Lista de días ── */
 .week-days-full {
   display: flex;
