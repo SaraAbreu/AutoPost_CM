@@ -1032,6 +1032,26 @@ async function publishToMeta(sourceImage, caption, credentials) {
   );
   const containerId = containerRes.data.id;
 
+  // Instagram descarga la imagen de forma asíncrona tras crear el contenedor.
+  // Si se llama a media_publish antes de que termine, Meta responde con
+  // "Media ID is not available" aunque el contenedor exista. Hay que esperar
+  // a que status_code pase a FINISHED (recomendación oficial de la Content
+  // Publishing API) antes de publicar.
+  for (let attempt = 0; ; attempt++) {
+    const statusRes = await axios.get(`https://graph.instagram.com/v21.0/${containerId}`, {
+      params: { fields: 'status_code,status', access_token: accessToken }
+    });
+    const { status_code, status } = statusRes.data;
+    if (status_code === 'FINISHED') break;
+    if (status_code === 'ERROR' || status_code === 'EXPIRED') {
+      throw new Error(`Instagram no pudo procesar la imagen (${status_code}): ${status || 'sin detalle'}`);
+    }
+    if (attempt >= 20) {
+      throw new Error('Instagram tardó demasiado en procesar la imagen antes de publicar (timeout)');
+    }
+    await new Promise(r => setTimeout(r, 1500));
+  }
+
   await axios.post(
     `https://graph.instagram.com/v21.0/${accountId}/media_publish`,
     { creation_id: containerId, access_token: accessToken }
