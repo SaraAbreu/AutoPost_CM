@@ -1,5 +1,7 @@
 import React, { useState, useRef } from 'react';
 import './Upload.css';
+import { CameraIcon, CalendarIcon, PaperclipIcon, SparklesIcon, FolderIcon, FilmIcon, WarningIcon, XIcon } from './icons';
+import RocketIcon from './RocketIcon';
 
 const WEEK_DAYS = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes'];
 
@@ -195,10 +197,10 @@ export default function Upload({ onGenerated, onWeekGenerated }) {
       {/* Toggle modo */}
       <div className="mode-toggle">
         <button className={`mode-btn ${mode === 'single' ? 'active' : ''}`} onClick={() => setMode('single')}>
-          📸 Caption único
+          <CameraIcon /> Caption único
         </button>
         <button className={`mode-btn ${mode === 'week' ? 'active' : ''}`} onClick={() => setMode('week')}>
-          📅 Semana completa
+          <CalendarIcon /> Semana completa
         </button>
       </div>
 
@@ -211,10 +213,10 @@ export default function Upload({ onGenerated, onWeekGenerated }) {
       {/* Toggle fuente de la imagen */}
       <div className="source-toggle">
         <button className={`mode-btn ${source === 'file' ? 'active' : ''}`} onClick={() => setSource('file')}>
-          📎 Subir foto
+          <PaperclipIcon /> Subir foto
         </button>
         <button className={`mode-btn ${source === 'ai' ? 'active' : ''}`} onClick={() => setSource('ai')}>
-          ✨ Generar con IA
+          <SparklesIcon /> Generar con IA
         </button>
       </div>
 
@@ -234,7 +236,7 @@ export default function Upload({ onGenerated, onWeekGenerated }) {
             </>
           ) : (
             <>
-              <div className="drop-icon">📂</div>
+              <div className="drop-icon"><FolderIcon /></div>
               <p className="drop-title">Arrastra imágenes o vídeos aquí</p>
               <p className="drop-sub">o haz clic para seleccionar</p>
               <p className="drop-hint">JPG, PNG, WEBP, MP4, MOV · Varios archivos a la vez</p>
@@ -261,9 +263,9 @@ export default function Upload({ onGenerated, onWeekGenerated }) {
             rows={3}
           />
           <button className="btn btn-primary" onClick={generateAIImage} disabled={aiLoading}>
-            {aiLoading ? <><span className="spinner" /> Generando imagen...</> : '✨ Generar imagen'}
+            {aiLoading ? <><span className="spinner" /> Generando imagen...</> : <><SparklesIcon /> Generar imagen</>}
           </button>
-          {aiError && !limitReached && <div className="upload-error">⚠️ {aiError}</div>}
+          {aiError && !limitReached && <div className="upload-error"><WarningIcon /> {aiError}</div>}
           {limitReached && <LimitReachedCard message={aiError} />}
         </div>
       )}
@@ -284,7 +286,7 @@ export default function Upload({ onGenerated, onWeekGenerated }) {
               <img src={activeItem?.preview} alt="Preview" className="preview-media" />
             )}
             {activeItem?.type === 'video' && (
-              <div className="video-badge">🎬 Vídeo · se usará el fotograma para el caption</div>
+              <div className="video-badge"><FilmIcon /> Vídeo · se usará el fotograma para el caption</div>
             )}
           </div>
 
@@ -308,7 +310,7 @@ export default function Upload({ onGenerated, onWeekGenerated }) {
                   <button
                     className="thumb-remove"
                     onClick={e => { e.stopPropagation(); removeFile(i); }}
-                  >✕</button>
+                  ><XIcon /></button>
                 </div>
               ))}
             </div>
@@ -320,7 +322,7 @@ export default function Upload({ onGenerated, onWeekGenerated }) {
             {/* Info + botón */}
             <div className="media-info card">
               <p className="preview-filename">
-                {activeItem?.type === 'video' ? '🎬' : '📎'} {activeItem?.file.name}
+                {activeItem?.type === 'video' ? <FilmIcon /> : <PaperclipIcon />} {activeItem?.file.name}
               </p>
               <p className="preview-size">
                 {((activeItem?.file.size ?? 0) / 1024).toFixed(0)} KB
@@ -329,7 +331,7 @@ export default function Upload({ onGenerated, onWeekGenerated }) {
               <button className="btn btn-primary generate-btn" onClick={generate} disabled={loading}>
                 {loading
                   ? <><span className="spinner" /> {mode === 'week' ? 'Generando semana...' : 'Generando caption...'}</>
-                  : <>{mode === 'week' ? '📅 Generar semana completa' : '✨ Generar caption con IA'}</>
+                  : <>{mode === 'week' ? <><CalendarIcon /> Generar semana completa</> : <><SparklesIcon /> Generar caption con IA</>}</>
                 }
               </button>
             </div>
@@ -337,7 +339,7 @@ export default function Upload({ onGenerated, onWeekGenerated }) {
         </div>
       )}
 
-      {error && !limitReached && <div className="upload-error">⚠️ {error}</div>}
+      {error && !limitReached && <div className="upload-error"><WarningIcon /> {error}</div>}
       {limitReached && <LimitReachedCard message={error} />}
     </div>
   );
@@ -350,7 +352,7 @@ export default function Upload({ onGenerated, onWeekGenerated }) {
 function LimitReachedCard({ message }) {
   return (
     <div className="upload-limit-card">
-      <span className="upload-limit-icon">🚀</span>
+      <span className="upload-limit-icon"><RocketIcon /></span>
       <p className="upload-limit-text">{message || 'Has agotado tus generaciones gratis de hoy.'}</p>
       <a href="/matriz.html" className="btn btn-primary">Pedir prueba completa →</a>
     </div>

@@ -10,7 +10,7 @@
   color: var(--text2);
 }
 
-.history-empty span { font-size: 48px; display: block; margin-bottom: 16px; }
+.history-empty span { font-size: 40px; color: var(--text3); display: flex; justify-content: center; margin-bottom: 16px; }
 .history-empty p { font-size: 18px; font-weight: 600; color: var(--text); }
 .history-empty-sub { font-size: 14px; color: var(--text2); margin-top: 8px; }
 

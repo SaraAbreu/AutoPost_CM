@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import './WeekView.css';
+import { CalendarIcon, CheckIcon, WarningIcon, CameraIcon, ClipboardIcon, XIcon } from './icons';
 
 // Próximo lunes (o hoy mismo si hoy ya es lunes) en formato YYYY-MM-DD, para
 // que el selector de fecha de "Programar semana" arranque con un valor sensato.
@@ -156,7 +157,7 @@ export default function WeekView({ data, onBack }) {
 
       <div className="schedule-panel card">
         <div className="schedule-panel-header">
-          <span className="schedule-panel-title">📅 Programar semana completa</span>
+          <span className="schedule-panel-title"><CalendarIcon /> Programar semana completa</span>
           <p className="schedule-panel-sub">
             Se publica sola en Instagram cada día, a la hora que elijas — no hace falta que vuelvas a entrar.
             Requiere tener la cuenta de Instagram conectada (Meta) y la app desplegada; si no, se guarda igual y
@@ -188,7 +189,7 @@ export default function WeekView({ data, onBack }) {
         </div>
         {scheduleResult && (
           <div className={`schedule-result ${scheduleResult.ok ? 'ok' : 'error'}`}>
-            {scheduleResult.ok ? '✅ ' : '⚠️ '}{scheduleResult.message}
+            {scheduleResult.ok ? <CheckIcon /> : <WarningIcon />} {scheduleResult.message}
           </div>
         )}
       </div>
@@ -211,14 +212,14 @@ export default function WeekView({ data, onBack }) {
                         onClick={() => fileRefs.current[i]?.click()}
                         title="Cambiar imagen"
                       >
-                        📷 Cambiar
+                        <CameraIcon /> Cambiar
                       </button>
                       {isCustom && (
                         <button
                           className="btn-remove-img"
                           onClick={() => removeImage(i)}
                           title="Usar imagen base"
-                        >✕</button>
+                        ><XIcon /></button>
                       )}
                     </div>
                     {isCustom && <span className="day-custom-badge">Personalizada</span>}
@@ -244,7 +245,7 @@ export default function WeekView({ data, onBack }) {
                       onClick={() => copy(i)}
                       disabled={regenerating[i]}
                     >
-                      {copied === i ? '✅ Copiado' : '📋 Copiar'}
+                      {copied === i ? <><CheckIcon /> Copiado</> : <><ClipboardIcon /> Copiar</>}
                     </button>
                   </div>
                   {regenerating[i] ? (

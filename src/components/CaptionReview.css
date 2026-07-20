@@ -181,6 +181,9 @@
 .review-actions .btn { flex: 1; justify-content: center; padding: 14px; }
 
 .review-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 12px 16px;
   background: rgba(239,68,68,0.1);
   border: 1px solid var(--danger);
@@ -198,7 +201,8 @@
 
 .regen-btn { margin-left: auto; flex-shrink: 0; }
 
-.review-hint { font-size: 13px; color: var(--text2); }
+.review-hint { display: flex; align-items: flex-start; gap: 7px; font-size: 13px; color: var(--text2); }
+.review-hint svg { flex-shrink: 0; margin-top: 2px; color: var(--accent); }
 
 /* ── Mejor hora ── */
 .best-time-card {
@@ -213,6 +217,9 @@
 }
 
 .best-time-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   font-size: 13px;
   font-weight: 700;
   color: var(--text);
@@ -239,7 +246,7 @@
   font-size: 13px;
 }
 
-.best-time-label { color: var(--text2); }
+.best-time-label { display: inline-flex; align-items: center; gap: 5px; color: var(--text2); }
 
 .best-time-value {
   font-weight: 600;
@@ -316,10 +323,21 @@
   gap: 16px;
 }
 
-.result-icon { font-size: 64px; }
+.result-icon {
+  font-size: 64px;
+  color: var(--accent);
+  width: 84px; height: 84px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--accent-subtle);
+}
+.result-icon svg { width: 40px; height: 40px; }
 .result-screen h2 { font-size: 26px; font-weight: 700; }
 .result-msg { color: var(--text2); font-size: 15px; }
 .result-voice-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   background: rgba(168, 85, 247, 0.1);
   border: 1px solid rgba(168, 85, 247, 0.4);
   border-radius: var(--radius-sm);
@@ -329,6 +347,7 @@
   text-align: left;
   line-height: 1.6;
 }
+.result-voice-note svg { flex-shrink: 0; margin-top: 2px; }
 
 .result-demo-note {
   background: rgba(79,142,247,0.1);

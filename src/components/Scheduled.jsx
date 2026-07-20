@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import './History.css';
 import './Scheduled.css';
+import { CalendarIcon, XIcon } from './icons';
 
 const STATUS_LABEL = {
   scheduled: { label: 'Programado', cls: 'badge-pending' },
@@ -40,7 +41,7 @@ export default function Scheduled() {
 
   if (items.length === 0) return (
     <div className="history-empty">
-      <span>📅</span>
+      <span><CalendarIcon /></span>
       <p>Sin posts programados</p>
       <p className="history-empty-sub">Genera una "Semana completa" y usa "Programar semana" para verlos aquí</p>
     </div>
@@ -81,7 +82,7 @@ export default function Scheduled() {
 
         {selected && (
           <div className="history-detail card">
-            <button className="detail-close" onClick={() => setSelected(null)}>✕</button>
+            <button className="detail-close" onClick={() => setSelected(null)}><XIcon /></button>
             <img src={selected.image} alt="" className="detail-image" />
             <div className="detail-meta">
               <span className={`badge ${(STATUS_LABEL[selected.status] || {}).cls}`}>

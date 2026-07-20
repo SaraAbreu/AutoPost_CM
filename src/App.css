@@ -107,7 +107,7 @@
   letter-spacing: -0.01em;
 }
 
-.nav-icon { font-size: 14px; line-height: 1; }
+.nav-icon { font-size: 14px; line-height: 1; display: inline-flex; align-items: center; }
 .nav-label { white-space: nowrap; }
 
 .nav-btn:hover { color: var(--text); background: rgba(240,162,2,0.08); }

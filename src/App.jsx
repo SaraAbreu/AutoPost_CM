@@ -9,6 +9,7 @@ import './App.css';
 import { useAuth } from './context/AuthContext';
 import AuthScreen from './components/AuthScreen';
 import RocketIcon from './components/RocketIcon';
+import { SparklesIcon, ClockHistoryIcon, CalendarIcon, SlidersIcon } from './components/icons';
 const GUEST_KEY = 'autopost_guest_mode';
 
 export default function App() {
@@ -62,21 +63,21 @@ export default function App() {
             className={`nav-btn ${screen === 'upload' || screen === 'review' ? 'active' : ''}`}
             onClick={() => { setScreen('upload'); setJob(null); }}
           >
-            <span className="nav-icon" aria-hidden="true">✨</span>
+            <span className="nav-icon" aria-hidden="true"><SparklesIcon /></span>
             <span className="nav-label">Nueva publicación</span>
           </button>
           <button
             className={`nav-btn ${screen === 'history' ? 'active' : ''}`}
             onClick={() => setScreen('history')}
           >
-            <span className="nav-icon" aria-hidden="true">🕘</span>
+            <span className="nav-icon" aria-hidden="true"><ClockHistoryIcon /></span>
             <span className="nav-label">Historial</span>
           </button>
           <button
             className={`nav-btn ${screen === 'scheduled' ? 'active' : ''}`}
             onClick={() => setScreen('scheduled')}
           >
-            <span className="nav-icon" aria-hidden="true">📅</span>
+            <span className="nav-icon" aria-hidden="true"><CalendarIcon /></span>
             <span className="nav-label">Programados</span>
           </button>
           <button
@@ -84,7 +85,7 @@ export default function App() {
             onClick={() => setScreen('settings')}
             title="Perfil de marca"
           >
-            <span className="nav-icon" aria-hidden="true">⚙️</span>
+            <span className="nav-icon" aria-hidden="true"><SlidersIcon /></span>
             <span className="nav-label">Perfil</span>
           </button>
         </nav>

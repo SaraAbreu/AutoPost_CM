@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './History.css';
+import { InboxIcon, XIcon } from './icons';
 
 const STATUS_LABEL = {
   pending: { label: 'Pendiente', cls: 'badge-pending' },
@@ -33,7 +34,7 @@ export default function History() {
 
   if (items.length === 0) return (
     <div className="history-empty">
-      <span>📋</span>
+      <span><InboxIcon /></span>
       <p>Sin publicaciones aún</p>
       <p className="history-empty-sub">Las publicaciones generadas aparecerán aquí</p>
     </div>
@@ -73,7 +74,7 @@ export default function History() {
         {/* Detalle */}
         {selected && (
           <div className="history-detail card">
-            <button className="detail-close" onClick={() => setSelected(null)}>✕</button>
+            <button className="detail-close" onClick={() => setSelected(null)}><XIcon /></button>
             <img src={selected.image} alt="" className="detail-image" />
             <div className="detail-meta">
               <span className={`badge ${(STATUS_LABEL[selected.status] || {}).cls}`}>

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './CaptionReview.css';
+import { CheckIcon, XCircleIcon, ClipboardIcon, RefreshIcon, BulbIcon, ClockIcon, CalendarIcon, WarningIcon, SparklesIcon, BrainIcon } from './icons';
 
 const DEFAULT_TONOS = ['✨ Inspiracional', '💬 Cercano', '🎯 Comercial'];
 
@@ -106,17 +107,17 @@ export default function CaptionReview({ job, onDone, onBack }) {
   if (result) {
     return (
       <div className="result-screen">
-        <div className="result-icon">{result.demo ? '✅' : '🎉'}</div>
+        <div className="result-icon">{result.demo ? <CheckIcon /> : <SparklesIcon />}</div>
         <h2>{result.demo ? 'Caption aprobado' : '¡Publicado en Instagram!'}</h2>
         <p className="result-msg">{result.message || 'Tu publicación se ha enviado a Instagram correctamente.'}</p>
         {result.demo && (
           <div className="result-demo-note">
-            ℹ️ Modo demo activo — configura META_ACCESS_TOKEN en el archivo .env para publicar de verdad.
+            Modo demo activo — configura META_ACCESS_TOKEN en el archivo .env para publicar de verdad.
           </div>
         )}
         {result.voiceExamples > 0 && (
           <div className="result-voice-note">
-            🧠 {result.voiceExamples < 3
+            <BrainIcon /> {result.voiceExamples < 3
               ? `La IA ha guardado tu edición (${result.voiceExamples}/3 para activar el aprendizaje)`
               : `La IA ha actualizado tu estilo con ${result.voiceExamples} ejemplos`}
           </div>
@@ -139,7 +140,7 @@ export default function CaptionReview({ job, onDone, onBack }) {
             <p>La IA generó 3 versiones — selecciona la que mejor encaje</p>
           </div>
           <button className="btn btn-ghost regen-btn" onClick={regenerate} disabled={regenerating}>
-            {regenerating ? <><span className="spinner" /> Generando...</> : '🔄 Generar otros 3'}
+            {regenerating ? <><span className="spinner" /> Generando...</> : <><RefreshIcon /> Generar otros 3</>}
           </button>
         </div>
         <div className="variants-grid">
@@ -152,7 +153,7 @@ export default function CaptionReview({ job, onDone, onBack }) {
             </div>
           ))}
         </div>
-        {error && <div className="review-error" style={{ marginTop: 16 }}>⚠️ {error}</div>}
+        {error && <div className="review-error" style={{ marginTop: 16 }}><WarningIcon /> {error}</div>}
       </div>
     );
   }
@@ -221,47 +222,47 @@ export default function CaptionReview({ job, onDone, onBack }) {
             />
           </div>
 
-          {error && <div className="review-error">⚠️ {error}</div>}
+          {error && <div className="review-error"><WarningIcon /> {error}</div>}
 
           <div className="review-actions">
             <button className="btn btn-success" onClick={approve} disabled={loading || !caption.trim()}>
-              {loading ? <><span className="spinner" /> Publicando...</> : '✅ Aprobar y publicar'}
+              {loading ? <><span className="spinner" /> Publicando...</> : <><CheckIcon /> Aprobar y publicar</>}
             </button>
             <button className="btn btn-danger" onClick={reject} disabled={loading}>
-              ❌ Rechazar
+              <XCircleIcon /> Rechazar
             </button>
           </div>
 
           <div className="review-secondary-actions">
             <button className="btn btn-ghost" onClick={copyCaption}>
-              {copied ? '✅ ¡Copiado!' : '📋 Copiar caption'}
+              {copied ? <><CheckIcon /> ¡Copiado!</> : <><ClipboardIcon /> Copiar caption</>}
             </button>
             {hasVariants && (
               <button className="btn btn-ghost" onClick={regenerate} disabled={regenerating}>
-                {regenerating ? <><span className="spinner" /> Generando...</> : '🔄 Generar otros 3'}
+                {regenerating ? <><span className="spinner" /> Generando...</> : <><RefreshIcon /> Generar otros 3</>}
               </button>
             )}
           </div>
 
           <p className="review-hint">
-            💡 Puedes editar el caption antes de publicar. Los cambios se guardan en el historial.
+            <BulbIcon /> Puedes editar el caption antes de publicar. Los cambios se guardan en el historial.
           </p>
 
           {/* Mejor hora */}
           <div className="best-time-card">
             <div className="best-time-header">
-              <span className="best-time-title">🕐 Mejor momento para publicar</span>
+              <span className="best-time-title"><ClockIcon /> Mejor momento para publicar</span>
             </div>
             {loadingTime ? (
               <p className="best-time-loading"><span className="spinner" /> Analizando tu sector…</p>
             ) : bestTime ? (
               <div className="best-time-body">
                 <div className="best-time-row">
-                  <span className="best-time-label">📅 Días</span>
+                  <span className="best-time-label"><CalendarIcon /> Días</span>
                   <span className="best-time-value">{bestTime.dias?.join(', ')}</span>
                 </div>
                 <div className="best-time-row">
-                  <span className="best-time-label">🕐 Hora</span>
+                  <span className="best-time-label"><ClockIcon /> Hora</span>
                   <span className="best-time-value">{bestTime.horas}</span>
                 </div>
                 <p className="best-time-reason">{bestTime.razon}</p>

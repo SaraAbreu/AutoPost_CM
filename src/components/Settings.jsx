@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './Settings.css';
+import { CameraIcon, CheckIcon, WarningIcon, BrainIcon } from './icons';
 
 const TONOS = ['Profesional', 'Cercano', 'Inspiracional', 'Divertido'];
 
@@ -161,18 +162,18 @@ export default function Settings() {
         {/* Sección conectar Instagram */}
         <div className="instagram-section">
           <div className="instagram-header">
-            <span className="instagram-title">📷 Cuenta de Instagram</span>
+            <span className="instagram-title"><CameraIcon /> Cuenta de Instagram</span>
           </div>
 
           {instagramNotice && (
             <p className={`instagram-notice instagram-notice-${instagramNotice.type}`}>
-              {instagramNotice.type === 'ok' ? '✅' : '⚠️'} {instagramNotice.text}
+              {instagramNotice.type === 'ok' ? <CheckIcon /> : <WarningIcon />} {instagramNotice.text}
             </p>
           )}
 
           {instagram.connected ? (
             <div className="instagram-connected-row">
-              <span className="instagram-connected-user">✅ Conectado como <strong>@{instagram.username}</strong></span>
+              <span className="instagram-connected-user"><CheckIcon /> Conectado como <strong>@{instagram.username}</strong></span>
               <button type="button" className="btn btn-ghost" onClick={disconnectInstagram}>Desconectar</button>
             </div>
           ) : (
@@ -188,7 +189,7 @@ export default function Settings() {
         {/* Sección voz aprendida */}
         <div className="voice-section">
           <div className="voice-header">
-            <span className="voice-title">🧠 Voz aprendida</span>
+            <span className="voice-title"><BrainIcon /> Voz aprendida</span>
             <span className="voice-count">{voice.count} {voice.count === 1 ? 'edición guardada' : 'ediciones guardadas'}</span>
           </div>
           {voice.patterns ? (
@@ -206,7 +207,7 @@ export default function Settings() {
         </div>
 
         <div className="settings-footer">
-          {saved && <span className="settings-saved">✅ Perfil guardado</span>}
+          {saved && <span className="settings-saved"><CheckIcon /> Perfil guardado</span>}
           <button type="submit" className="btn btn-primary">Guardar perfil</button>
         </div>
       </form>
