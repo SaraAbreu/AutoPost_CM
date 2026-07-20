@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import './History.css';
-import { InboxIcon, XIcon } from './icons';
+import { InboxIcon, XIcon, RefreshIcon, WarningIcon } from './icons';
 
 const STATUS_LABEL = {
   pending: { label: 'Pendiente', cls: 'badge-pending' },
@@ -15,6 +15,8 @@ export default function History() {
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState(null);
+  const [retrying, setRetrying] = useState(false);
+  const [retryError, setRetryError] = useState('');
 
   useEffect(() => {
     fetch('/api/history')
@@ -28,6 +30,27 @@ export default function History() {
       day: '2-digit', month: '2-digit', year: 'numeric',
       hour: '2-digit', minute: '2-digit'
     });
+  }
+
+  async function retryPublish(item) {
+    setRetrying(true);
+    setRetryError('');
+    try {
+      const res = await fetch('/api/publish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: item.id, caption: item.caption, originalCaption: item.caption })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || data.error || 'Error publicando');
+      const newStatus = data.demo ? 'published_demo' : 'published';
+      setItems(list => list.map(i => i.id === item.id ? { ...i, status: newStatus } : i));
+      setSelected(sel => sel && sel.id === item.id ? { ...sel, status: newStatus } : sel);
+    } catch (err) {
+      setRetryError(err.message);
+    } finally {
+      setRetrying(false);
+    }
   }
 
   if (loading) return <div className="history-loading">Cargando historial...</div>;
@@ -74,7 +97,7 @@ export default function History() {
         {/* Detalle */}
         {selected && (
           <div className="history-detail card">
-            <button className="detail-close" onClick={() => setSelected(null)}><XIcon /></button>
+            <button className="detail-close" onClick={() => { setSelected(null); setRetryError(''); }}><XIcon /></button>
             <img src={selected.image} alt="" className="detail-image" />
             <div className="detail-meta">
               <span className={`badge ${(STATUS_LABEL[selected.status] || {}).cls}`}>
@@ -86,6 +109,14 @@ export default function History() {
               <div className="detail-caption-label">Caption</div>
               <pre className="detail-caption-text">{selected.caption}</pre>
             </div>
+            {selected.status === 'error' && (
+              <div className="detail-retry">
+                <button className="btn btn-primary" onClick={() => retryPublish(selected)} disabled={retrying}>
+                  {retrying ? <><span className="spinner" /> Reintentando...</> : <><RefreshIcon /> Reintentar publicación</>}
+                </button>
+                {retryError && <div className="upload-error"><WarningIcon /> {retryError}</div>}
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -105,6 +105,9 @@
   overflow-y: auto;
 }
 
+.detail-retry { margin-top: 16px; display: flex; flex-direction: column; gap: 10px; }
+.detail-retry .btn { width: 100%; }
+
 /* ══════════════════════════ Responsive ══════════════════════════ */
 @media (max-width: 760px) {
   .history-grid { grid-template-columns: 1fr; }
