@@ -53,7 +53,7 @@ export default function CaptionReview({ job, onDone, onBack }) {
         body: JSON.stringify({ id: job.id, caption, originalCaption, imageBase64: job.image })
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Error publicando');
+      if (!res.ok) throw new Error(data.detail || data.error || 'Error publicando');
       setResult(data);
     } catch (err) {
       setError(err.message);

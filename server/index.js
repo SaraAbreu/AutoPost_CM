@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import axios from 'axios';
+import sharp from 'sharp';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -888,7 +889,8 @@ app.post('/api/publish', requireIdentity, async (req, res) => {
     if (entry) entry.status = 'error';
     await saveHistory(tenant, historyList);
     console.error('Error en /api/publish:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Error publicando en Instagram', detail: err.message });
+    const detail = err.response?.data?.error?.message || err.message;
+    res.status(500).json({ error: 'Error publicando en Instagram', detail });
   }
 });
 
@@ -1010,11 +1012,14 @@ async function publishToMeta(sourceImage, caption, credentials) {
 
   const match = /^data:(.+);base64,(.+)$/.exec(sourceImage || '');
   if (!match) throw new Error('No se encontró una imagen válida para publicar');
-  const [, mime, data] = match;
-  const ext = (mime.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
-  const filename = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
+  const [, , data] = match;
+  // Instagram solo acepta JPEG para publicar — convertimos siempre, sea cual
+  // sea el origen (foto subida en PNG/WEBP, imagen generada por IA, etc.),
+  // para no depender de que el formato de entrada ya sea compatible.
+  const jpegBuffer = await sharp(Buffer.from(data, 'base64')).jpeg({ quality: 90 }).toBuffer();
+  const filename = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}.jpg`;
   const filepath = path.join(TMP_UPLOADS_DIR, filename);
-  fs.writeFileSync(filepath, Buffer.from(data, 'base64'));
+  fs.writeFileSync(filepath, jpegBuffer);
   const imageUrl = `${process.env.PUBLIC_URL.replace(/\/$/, '')}/tmp-uploads/${filename}`;
 
   // Usamos graph.instagram.com (no graph.facebook.com) porque las cuentas se
